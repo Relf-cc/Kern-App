@@ -404,22 +404,35 @@ fn pull(app: &AppHandle, space: &str, force: bool) -> Result<(), Stop> {
         })?;
         emit_applied(app, space, &touched);
         first = false;
-        if !more {
+        // A cursor that didn't move means the next page would be this one
+        // again, so stop rather than ask for it forever.
+        if !more || next <= since {
             return Ok(());
         }
     }
 }
 
-fn push(app: &AppHandle, space: &str) -> Result<(), Stop> {
+/// Sends queued changes. `true` means it gave up with some still queued
+/// because a round-trip settled nothing (see the repeat check below).
+fn push(app: &AppHandle, space: &str) -> Result<bool, Stop> {
     let conn_id = app.state::<AppState>().cloud.conn_id.lock().ok().and_then(|c| c.clone());
+    let mut last_sent: Option<String> = None;
     for _ in 0..200 {
         let batch = on_space(app, space, |c| sync::collect(c, 300, 2 * 1024 * 1024))?;
         if batch.keys.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let result = if batch.changes.is_empty() {
             sync::PushResult::default()
         } else {
+            // The same records, byte for byte, a second time: the last
+            // round-trip settled nothing (the server keeps a field
+            // differently, say), and sending them again would only spin.
+            let sent = serde_json::to_string(&batch.changes).unwrap_or_default();
+            if last_sent.as_deref() == Some(sent.as_str()) {
+                return Ok(true);
+            }
+            last_sent = Some(sent);
             set_status(app, |s| s.state = "syncing".into());
             match authed(app, "POST", &format!("/spaces/{space}/sync/push"), Some(&json!({ "conn": conn_id, "changes": batch.changes }))) {
                 Ok(v) => serde_json::from_value(v).map_err(AppError::from)?,
@@ -431,7 +444,7 @@ fn push(app: &AppHandle, space: &str) -> Result<(), Stop> {
                     });
                     let _ = app.emit("kern://cloud-readonly", space);
                     pull(app, space, true)?;
-                    return Ok(());
+                    return Ok(false);
                 }
                 Err(e) => return Err(Stop::Err(e)),
             }
@@ -439,7 +452,7 @@ fn push(app: &AppHandle, space: &str) -> Result<(), Stop> {
         let touched = on_space(app, space, |c| sync::ack(c, &batch, &result))?;
         emit_applied(app, space, &touched);
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Starts the background sync worker.
@@ -450,22 +463,39 @@ pub fn start_worker(app: AppHandle) {
             let waker = app.state::<AppState>().cloud.waker();
             let mut backoff = 0u32;
             let mut last_pull = Instant::now() - Duration::from_secs(3600);
+            // Nothing is retried before this moment. The replica's commit
+            // hook signals the waker on every edit, so without a deadline a
+            // failing space is retried on each keystroke rather than backing
+            // off, and the status flickers between syncing and failed.
+            let mut retry_at = Instant::now();
+            let mut last_space: Option<String> = None;
+            let (mut want_push, mut want_pull, mut force) = (false, false, false);
             loop {
                 let state = app.state::<AppState>();
                 let idle = if state.cloud.realtime() { 300 } else { 45 };
-                let wait = if backoff > 0 { Duration::from_secs([2, 5, 15, 30, 60][(backoff as usize - 1).min(4)]) } else { Duration::from_secs(idle) };
-                let (mut want_push, mut want_pull, mut force) = waker.wait(wait);
-                if want_push && !want_pull {
-                    // Coalesce bursts of edits (typing, dragging).
-                    std::thread::sleep(Duration::from_millis(150));
-                    let (p, l, f) = waker.take();
-                    want_push |= p;
-                    want_pull |= l;
-                    force |= f;
-                }
-                let Some(space) = state.cloud.active() else { continue };
-                if backoff > 0 {
+                let hold = retry_at.saturating_duration_since(Instant::now());
+                let (p, l, f) = waker.wait(if hold.is_zero() { Duration::from_secs(idle) } else { hold });
+                // Signals that arrive during a backoff are carried, not acted on.
+                want_push |= p;
+                want_pull |= l;
+                force |= f;
+                let Some(space) = state.cloud.active() else {
+                    want_push = false;
+                    want_pull = false;
+                    force = false;
+                    last_space = None;
+                    continue;
+                };
+                if last_space.as_deref() != Some(space.id.as_str()) {
+                    // A space just opened: start clean, not inside the
+                    // previous one's backoff.
+                    last_space = Some(space.id.clone());
+                    backoff = 0;
+                    retry_at = Instant::now();
                     want_pull = true;
+                }
+                if Instant::now() < retry_at {
+                    continue;
                 }
                 if state.ai.vault.get(client::TOKEN_REF).ok().flatten().is_none() {
                     set_status(&app, |s| {
@@ -474,32 +504,38 @@ pub fn start_worker(app: AppHandle) {
                     });
                     continue;
                 }
-                let mut run = || -> Result<(), Stop> {
-                    if want_pull || last_pull.elapsed() > Duration::from_secs(idle) {
+                if want_push && !want_pull {
+                    // Coalesce bursts of edits (typing, dragging).
+                    std::thread::sleep(Duration::from_millis(150));
+                    let (p, l, f) = waker.take();
+                    want_push |= p;
+                    want_pull |= l;
+                    force |= f;
+                }
+                if backoff > 0 {
+                    want_pull = true;
+                }
+                let (do_push, do_pull, do_force) = (want_push, want_pull, force);
+                want_push = false;
+                want_pull = false;
+                force = false;
+                let mut run = || -> Result<bool, Stop> {
+                    if do_pull || last_pull.elapsed() > Duration::from_secs(idle) {
                         set_status(&app, |s| s.state = "syncing".into());
-                        pull(&app, &space.id, force)?;
+                        pull(&app, &space.id, do_force)?;
                         last_pull = Instant::now();
                     }
-                    if want_push || want_pull {
-                        push(&app, &space.id)?;
+                    if do_push || do_pull {
+                        return push(&app, &space.id);
                     }
-                    Ok(())
+                    Ok(false)
                 };
-                match run() {
-                    Ok(()) | Err(Stop::Stale) => {
-                        backoff = 0;
-                        let pending = state.with(|c| Ok(sync::pending_count(c))).unwrap_or(0);
-                        set_status(&app, |s| {
-                            if s.state != "read_only" {
-                                s.state = "idle".into();
-                                s.message = None;
-                            }
-                            s.pending = pending;
-                            s.last_synced_at = Some(now_ms());
-                        });
-                    }
+                let outcome = run();
+                let pending = state.with(|c| Ok(sync::pending_count(c))).unwrap_or(0);
+                let stuck = match outcome {
+                    Ok(stuck) => stuck,
+                    Err(Stop::Stale) => false,
                     Err(Stop::Err(e)) => {
-                        let pending = state.with(|c| Ok(sync::pending_count(c))).unwrap_or(0);
                         let (st, retry) = match &e {
                             AppError::Auth(_) => ("signed_out", false),
                             AppError::Network(_) => ("offline", true),
@@ -510,14 +546,29 @@ pub fn start_worker(app: AppHandle) {
                             }
                             _ => ("error", true),
                         };
+                        eprintln!("cloud sync: {e} ({st})");
                         backoff = if retry { (backoff + 1).min(5) } else { 0 };
+                        retry_at = Instant::now() + Duration::from_secs(if retry { [2, 5, 15, 30, 60][(backoff as usize - 1).min(4)] } else { 0 });
                         set_status(&app, |s| {
                             s.state = st.into();
                             s.pending = pending;
                             s.message = Some(e.to_string());
                         });
+                        continue;
                     }
-                }
+                };
+                backoff = 0;
+                retry_at = Instant::now();
+                set_status(&app, |s| {
+                    if s.state != "read_only" {
+                        // Changes that keep coming back wait for the next
+                        // ordinary round rather than being sent in a loop.
+                        s.state = if stuck { "error" } else { "idle" }.into();
+                        s.message = stuck.then(|| "Kern Cloud isn't accepting some changes. They're kept on this computer and Kern will keep trying.".to_string());
+                    }
+                    s.pending = pending;
+                    s.last_synced_at = Some(now_ms());
+                });
             }
         })
         .expect("failed to start the cloud sync thread");

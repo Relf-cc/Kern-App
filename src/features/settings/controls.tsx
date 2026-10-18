@@ -7,7 +7,7 @@
 // setting key; changes apply immediately and persist.
 
 import type { ReactNode } from "react";
-import { useSetting, setSetting } from "@/stores/settings";
+import { useSetting, setSetting, setSettings } from "@/stores/settings";
 import type { SettingKey, Settings } from "./schema";
 import { Segmented, Select, Slider, Switch } from "@/components/ui/Controls";
 import { useState } from "react";
@@ -31,9 +31,15 @@ export interface GroupDef {
   rows: RowDef[];
 }
 
-export function SToggle({ k, label }: { k: KeysOfType<boolean>; label?: string }) {
+/** `clears` lists settings this one contradicts: they go off as it goes on. */
+export function SToggle({ k, label, clears }: { k: KeysOfType<boolean>; label?: string; clears?: KeysOfType<boolean>[] }) {
   const v = useSetting(k) as boolean;
-  return <Switch checked={v} onChange={(x) => void setSetting(k, x as never)} label={label} />;
+  const change = (x: boolean) => {
+    if (!x || !clears?.length) return void setSetting(k, x as never);
+    const entries = Object.fromEntries([[k, true], ...clears.map((other) => [other, false])]);
+    void setSettings(entries as Partial<Settings>);
+  };
+  return <Switch checked={v} onChange={change} label={label} />;
 }
 
 export function SSelect<K extends SettingKey>({

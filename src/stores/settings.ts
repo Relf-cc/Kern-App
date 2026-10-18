@@ -81,3 +81,8 @@ export function getSetting<K extends SettingKey>(key: K): Settings[K] {
 export function setSetting<K extends SettingKey>(key: K, value: Settings[K]) {
   return useSettings.getState().set(key, value);
 }
+
+/** Several settings in one write (keys that have to change together). */
+export function setSettings(entries: Partial<Settings>) {
+  return useSettings.getState().setMany(entries);
+}

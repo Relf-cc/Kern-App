@@ -7,7 +7,7 @@
 //! The window runs in one of two modes: full Kern, or Kern Lite (a small task
 //! tracker over the same data). Each mode keeps its own size and position.
 
-use crate::domain::settings;
+use crate::domain::{notify, settings};
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -235,6 +235,32 @@ pub fn restore_and_show(app: &AppHandle) {
     let _ = w.set_focus();
 }
 
+fn tray_visible(state: &AppState) -> bool {
+    state.with(|c| Ok(settings::get_or(c, "general.showTray", true))).unwrap_or(true)
+}
+
+/// Whether `key` asks for the window to disappear into the tray. Without a
+/// tray icon there would be nothing left to click, so the answer is no.
+fn hides_to_tray(state: &AppState, key: &str, default: bool) -> bool {
+    state.with(|c| Ok(settings::get_or(c, key, default))).unwrap_or(default) && tray_visible(state)
+}
+
+/// Hides the window into the tray, saying so the first time: a window that
+/// leaves the taskbar with nothing said looks exactly like Kern closing.
+fn hide_to_tray(window: &Window, state: &AppState) {
+    let _ = window.hide();
+    let announce = state
+        .with(|c| Ok(settings::get_or(c, "notifications.enabled", true) && notify::first_time(c, "window-hidden-to-tray")))
+        .unwrap_or(false);
+    if announce {
+        notify::send(
+            window.app_handle(),
+            "Kern is still running",
+            "The window went to the tray, not away. Click the tray icon to bring it back, or turn this off in Settings → General.",
+        );
+    }
+}
+
 pub fn on_window_event(window: &Window, event: &WindowEvent) {
     if window.label() != "main" {
         return;
@@ -247,9 +273,9 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             let behavior: String = state
                 .with(|c| Ok(settings::get_or(c, "general.closeBehavior", "quit".to_string())))
                 .unwrap_or_else(|_| "quit".into());
-            if behavior == "tray" && !state.quitting.load(Ordering::SeqCst) {
+            if behavior == "tray" && tray_visible(&state) && !state.quitting.load(Ordering::SeqCst) {
                 api.prevent_close();
-                let _ = window.hide();
+                hide_to_tray(window, &state);
             } else if !state.quitting.load(Ordering::SeqCst) && state.pty.running_count() > 0 {
                 // Don't silently abandon running terminal processes: ask first.
                 api.prevent_close();
@@ -257,12 +283,8 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             }
         }
         WindowEvent::Resized(_) => {
-            if window.is_minimized().unwrap_or(false) {
-                let to_tray: bool =
-                    state.with(|c| Ok(settings::get_or(c, "general.minimizeToTray", false))).unwrap_or(false);
-                if to_tray {
-                    let _ = window.hide();
-                }
+            if window.is_minimized().unwrap_or(false) && hides_to_tray(&state, "general.minimizeToTray", false) {
+                hide_to_tray(window, &state);
             }
         }
         _ => {}

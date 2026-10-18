@@ -266,7 +266,9 @@
   background: var(--surface-2);
   border-radius: var(--r-sm);
 }
-.kcard:hover .kcard__actions {
+.kcard:hover .kcard__actions,
+/* Stays put while its menu is open - see .task-row__hover. */
+.kcard__actions:has([data-state="open"]) {
   display: flex;
 }
 .kanban[data-density="compact"] .kcard {

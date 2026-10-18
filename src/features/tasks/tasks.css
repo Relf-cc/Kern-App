@@ -138,10 +138,14 @@
   border-radius: var(--r-sm);
 }
 .task-row:hover .task-row__hover,
-.task-row:focus-within .task-row__hover {
+.task-row:focus-within .task-row__hover,
+/* While its menu or date picker is open: hiding the trigger would leave the
+   panel anchored to nothing, and it jumps to the corner of the window. */
+.task-row__hover:has([data-state="open"]) {
   display: flex;
 }
-.task-row:hover .task-row__meta {
+.task-row:hover .task-row__meta,
+.task-row:has(.task-row__hover [data-state="open"]) .task-row__meta {
   visibility: hidden;
 }
 

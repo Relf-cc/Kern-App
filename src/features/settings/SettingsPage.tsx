@@ -417,8 +417,8 @@ function useSections(apiTab?: ApiTab): Record<SettingsSection, GroupDef[] | Reac
             control: <SSegmented k="general.startMode" options={[{ value: "ask", label: "Ask" }, { value: "kern", label: "Kern" }, { value: "lite", label: "Kern Lite" }]} />,
           },
           { label: "Launch at login", hint: `Start ${APP_NAME} when you sign in.`, keywords: "autostart boot", control: <SToggle k="general.launchAtLogin" /> },
-          { label: "Start minimised at login", hint: "When launched at login, stay in the tray (or taskbar) until opened.", control: <SToggle k="general.launchMinimized" /> },
-          { label: "Start maximised", control: <SToggle k="general.startMaximized" /> },
+          { label: "Start minimised at login", hint: "When launched at login, stay in the tray (or taskbar) until opened.", control: <SToggle k="general.launchMinimized" clears={["general.startMaximized"]} /> },
+          { label: "Start maximised", control: <SToggle k="general.startMaximized" clears={["general.launchMinimized"]} /> },
           { label: "Remember window size and position", control: <SToggle k="general.rememberWindow" /> },
           {
             label: "On launch, open",
