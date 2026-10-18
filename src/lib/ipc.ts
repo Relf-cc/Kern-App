@@ -386,7 +386,7 @@ export const api = {
     verifyEmail: (email: string, code: string) => call<T.CloudAccount>("cloud_verify_email", { email, code }),
     signInWithCode: (email: string, code: string) => call<T.CloudAccount>("cloud_sign_in_code", { email, code }),
     resetPassword: (email: string, code: string, password: string) => call<void>("cloud_reset_password", { email, code, password }),
-    signOut: (forget = false) => call<void>("cloud_sign_out", { forget }),
+    signOut: (forget = false) => call<boolean>("cloud_sign_out", { forget }),
     request: <R = unknown>(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, body?: unknown) =>
       call<R>("cloud_request", { method, path, body: body ?? null }),
     inviteInfo: (id: string) => call<T.InviteSummary>("cloud_invite_info", { id }),

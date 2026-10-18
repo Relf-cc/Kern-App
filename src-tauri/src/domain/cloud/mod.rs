@@ -200,7 +200,7 @@ fn base(state: &AppState) -> AppResult<String> {
         if !settings::get_or(c, "privacy.network", true) {
             return invalid("Network access is turned off in Settings → Privacy, so Kern Cloud is unavailable.");
         }
-        Ok(client::api_base(settings::get(c, "cloud.apiUrl")))
+        Ok(client::api_base())
     })
 }
 
@@ -538,7 +538,7 @@ pub struct CloudInfo {
 
 #[tauri::command]
 pub fn cloud_status(state: tauri::State<AppState>) -> AppResult<CloudInfo> {
-    let (api, account) = state.with(|c| Ok((client::api_base(settings::get(c, "cloud.apiUrl")), account(c))))?;
+    let (api, account) = state.with(|c| Ok((client::api_base(), account(c))))?;
     let signed_in = state.ai.vault.get(client::TOKEN_REF).ok().flatten().is_some();
     let mut sync = state.cloud.status();
     if sync.state.is_empty() {
@@ -647,11 +647,21 @@ fn code_error(e: AppError) -> AppError {
 
 /// Signs out on this computer. With `forget`, the local copies of this
 /// account's spaces are deleted too (they're on the server).
+///
+/// Returns whether Kern Cloud actually ended the session. The local token
+/// goes either way - the request was to sign out - but a revoke that never
+/// reached the server leaves the session usable by anyone holding a copy of
+/// the token, so the caller has to be able to say so instead of reporting a
+/// clean sign-out.
 #[tauri::command]
-pub async fn cloud_sign_out(app: AppHandle, forget: bool) -> AppResult<()> {
+pub async fn cloud_sign_out(app: AppHandle, forget: bool) -> AppResult<bool> {
     blocking(&app, move |app| {
         let state = app.state::<AppState>();
-        let _ = authed(app, "POST", "/auth/sign-out", Some(&json!({})));
+        // A rejected session is already gone, which is the outcome we wanted.
+        let revoked = match authed(app, "POST", "/auth/sign-out", Some(&json!({}))) {
+            Ok(_) | Err(AppError::Auth(_)) => true,
+            Err(_) => false,
+        };
         open_space_now(app, None)?;
         let _ = state.ai.vault.delete(client::TOKEN_REF);
         let acct = state.with(|c| Ok(account(c)))?;
@@ -664,7 +674,7 @@ pub async fn cloud_sign_out(app: AppHandle, forget: bool) -> AppResult<()> {
         }
         set_status(app, |s| *s = SyncStatus { state: "off".into(), ..Default::default() });
         let _ = app.emit("kern://cloud-auth", "signed-out");
-        Ok(())
+        Ok(revoked)
     })
     .await
 }

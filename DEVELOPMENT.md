@@ -154,6 +154,22 @@ The server lives in the separate `KERNWEB` repository (Node, Hono, Better Auth,
 PostgreSQL) at `https://api.relf.cloud/kern/v1`. Development builds can point
 elsewhere with `KERN_CLOUD_URL` (e.g. `http://localhost:8787/kern/v1`).
 
+That environment variable is the *only* way to move the address, and
+deliberately so: `client::api_base()` takes no argument and reads no setting.
+The session token is sent as a bearer to whatever it returns, and the request
+is made in Rust with `ureq`, where the window's CSP doesn't apply - so an
+address the front end could write would be a way to hand the token to another
+host. Settings are writable from the front end (`settings_set` takes any key),
+so a backend-trusted address must not live there. Self-hosting uses the
+environment variable too.
+
+Signing out reports whether the server actually ended the session
+(`cloud_sign_out` returns a bool). The local token is removed either way, but
+a revoke that never reached Kern Cloud leaves the session usable by anyone
+holding a copy of the token, so the interface says so rather than claiming a
+clean sign-out; a rejected session counts as revoked, since it was already
+gone.
+
 - **Offline mode** is the ordinary `kern.db`, unchanged and account-free.
 - **Spaces**: the personal space and each workspace get a local replica at
   `cloud/<user>/<space>.db` with the same schema, so every feature works the

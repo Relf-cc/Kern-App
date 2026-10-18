@@ -32,7 +32,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } fro
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-const REPO = "ChristianRelf/KERN";
+const REPO = "Relf-cc/Kern-App";
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);

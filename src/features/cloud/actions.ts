@@ -88,11 +88,15 @@ export async function signOut() {
   });
   if (!forget) return;
   try {
-    await api.cloud.signOut(false);
+    const revoked = await api.cloud.signOut(false);
     useCloud.setState({ me: null, peers: {} });
     const info = await refreshStatus();
     resetInterface(info?.active?.id ?? null);
-    toast("Signed out of Kern Cloud");
+    // Signed out here either way, but the session may still be live on the
+    // server, and the token to revoke it is already gone from this computer.
+    if (revoked) toast("Signed out of Kern Cloud");
+    else
+      toast("Signed out on this computer, but Kern Cloud couldn't be reached to end the session. If you're concerned someone else has access, sign out of all devices from another computer that's still signed in.", { tone: "error", duration: 12000 });
   } catch (e) {
     toastError(errorText(e, "Couldn't sign out."));
   }

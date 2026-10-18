@@ -15,13 +15,23 @@ pub const DEFAULT_API: &str = "https://api.relf.cloud/kern/v1";
 /// Credential-store entry holding the session token.
 pub const TOKEN_REF: &str = "kern-cloud-session";
 
-/// The API base: `KERN_CLOUD_URL` (development), the `cloud.apiUrl`
-/// setting, or the public server.
-pub fn api_base(setting: Option<String>) -> String {
-    std::env::var("KERN_CLOUD_URL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .or(setting.filter(|s| s.starts_with("https://") || s.starts_with("http://localhost") || s.starts_with("http://127.0.0.1")))
+/// The API base: `KERN_CLOUD_URL` (development or self-hosting), or the
+/// public server.
+///
+/// Deliberately not a setting. The session token is sent as a bearer to
+/// whatever this returns, so a value the front end could write would let
+/// anything running in the webview point the token at a host of its own
+/// choosing - and these requests are made here, in Rust, where the window's
+/// CSP cannot refuse them. The environment is set by whoever starts Kern,
+/// which the webview cannot do.
+pub fn api_base() -> String {
+    from_env(std::env::var("KERN_CLOUD_URL").ok())
+}
+
+/// The rule on its own, taking the environment value rather than reading it,
+/// so it can be tested without disturbing the process environment.
+fn from_env(raw: Option<String>) -> String {
+    raw.filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_API.to_string())
         .trim_end_matches('/')
         .to_string()
@@ -153,6 +163,16 @@ mod tests {
     fn paths_stay_on_the_api() {
         assert!(request("https://api.relf.cloud/kern/v1", None, "GET", "https://evil.example/x", None).is_err());
         assert!(request("https://api.relf.cloud/kern/v1", None, "GET", "/../x", None).is_err());
+    }
+
+    #[test]
+    fn the_api_host_comes_only_from_the_environment() {
+        // The session token is sent to whatever api_base returns, so nothing
+        // the front end can write may change it - only the environment, set
+        // by whoever launches Kern.
+        assert_eq!(from_env(None), DEFAULT_API);
+        assert_eq!(from_env(Some("  ".into())), DEFAULT_API);
+        assert_eq!(from_env(Some("http://localhost:8787/kern/v1/".into())), "http://localhost:8787/kern/v1");
     }
 
     #[test]
