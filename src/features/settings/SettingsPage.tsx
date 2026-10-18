@@ -494,6 +494,17 @@ function useSections(apiTab?: ApiTab): Record<SettingsSection, GroupDef[] | Reac
           { label: "Remember last-used task properties", hint: "New tasks start with the priority and labels you used last.", keywords: "defaults", control: <SToggle k="interaction.rememberTaskProps" /> },
         ],
       },
+      {
+        title: "Writing",
+        rows: [
+          {
+            label: "Check spelling",
+            hint: "Underlines misspelled words in notes, with corrections on right-click. It uses your computer's own dictionaries, so nothing is sent anywhere.",
+            keywords: "spell checker spelling autocorrect proofread dictionary suggestions typo",
+            control: <SToggle k="editor.spellcheck" />,
+          },
+        ],
+      },
     ],
     appearance: [
       {
@@ -655,6 +666,7 @@ function useSections(apiTab?: ApiTab): Record<SettingsSection, GroupDef[] | Reac
           { label: "Default columns for new boards", keywords: "kanban", block: <ColumnsEditor /> },
           { label: "Default card density", control: <SSegmented k="boards.defaultCardDensity" options={[{ value: "compact", label: "Compact" }, { value: "expanded", label: "Expanded" }]} /> },
           { label: "Default column width", control: <SSlider k="boards.columnWidth" min={220} max={420} step={4} format={(v) => `${v}px`} /> },
+          { label: "Celebrate finished cards", hint: "A small burst of confetti when you tick a card off or drag one into a done column.", keywords: "confetti celebration animation done complete", control: <SToggle k="boards.celebrate" /> },
         ],
       },
     ],

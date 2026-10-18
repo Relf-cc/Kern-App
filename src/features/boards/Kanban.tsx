@@ -46,6 +46,8 @@ import { openTask, taskMenu } from "@/features/tasks/menu";
 import { LabelChip } from "@/features/tasks/labels";
 import { ProjectGlyph } from "@/features/projects/ProjectGlyph";
 import { GithubMark } from "@/features/github/shared";
+import { getSetting } from "@/stores/settings";
+import { confettiAtRect } from "@/lib/confetti";
 
 export interface KanbanColumn {
   id: string;
@@ -77,6 +79,11 @@ export function between(a: number | undefined, b: number | undefined): number {
 }
 
 const COL_PREFIX = "col:";
+
+/** Confetti for a card that just crossed the finish line, if it's switched on. */
+const celebrate = (rect: { left: number; top: number; width: number; height: number } | null | undefined) => {
+  if (getSetting("boards.celebrate")) confettiAtRect(rect);
+};
 
 // ----------------------------------------------------------------- card
 
@@ -132,7 +139,16 @@ const KanbanCard = memo(function KanbanCard({
       data-task-id={task.id}
     >
       <div className="kcard__title-row">
-        <TaskCheck checked={done} onToggle={() => void toggleComplete(task)} priority={task.priority} blocked={task.status === "blocked" || !!task.blockedBy} cancelled={!!task.resolution} />
+        <TaskCheck
+          checked={done}
+          onToggle={(e) => {
+            if (!done) celebrate(e?.currentTarget.getBoundingClientRect());
+            void toggleComplete(task);
+          }}
+          priority={task.priority}
+          blocked={task.status === "blocked" || !!task.blockedBy}
+          cancelled={!!task.resolution}
+        />
         {editing ? (
           <textarea
             className="kcard__title-input"
@@ -645,6 +661,7 @@ export function Kanban({
         ? between(prev ? orderOf(prev) : undefined, next ? orderOf(next) : undefined)
         : Math.max(0, ...list.map((id) => (taskById.get(id) ? orderOf(taskById.get(id)!) : 0))) + 1;
     if (!moved && order === orderOf(task)) return;
+    if (moved && col.status === "completed" && task.status !== "completed") celebrate(e.active.rect.current.translated);
     onMove(task, col, order);
   };
 

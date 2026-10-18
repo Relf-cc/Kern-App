@@ -284,6 +284,25 @@
   font-size: var(--fs-md);
   pointer-events: none;
 }
+/* The flowchart shapes taper or bulge, so their labels keep clear of the
+   edges instead of spilling over a slant. */
+.wbn--shape[data-shape="diamond"] .wbn__shape-label {
+  padding: 8px 22%;
+}
+.wbn--shape[data-shape="circle"] .wbn__shape-label {
+  padding: 12% 14%;
+}
+.wbn--shape[data-shape="parallelogram"] .wbn__shape-label,
+.wbn--shape[data-shape="hexagon"] .wbn__shape-label {
+  padding: 8px 15%;
+}
+.wbn--shape[data-shape="cylinder"] .wbn__shape-label {
+  padding: 20% 10% 10%;
+}
+.wbn--shape[data-shape="document"] .wbn__shape-label {
+  padding: 8px 8px 18%;
+}
+
 .wbn--card {
   background: var(--surface-2);
   border: 1px solid var(--border);

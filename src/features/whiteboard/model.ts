@@ -22,6 +22,34 @@ export type WbNodeType =
   | "milestone"
   | "draw";
 
+/**
+ * Shapes the shape tool can draw. The first five are the general-purpose
+ * ones; the rest are the standard flowchart vocabulary, so a diagram drawn
+ * here reads the same as one drawn anywhere else.
+ */
+export type ShapeKind =
+  | "rect"
+  | "rounded"
+  | "circle"
+  | "line"
+  | "arrow"
+  | "stadium"
+  | "diamond"
+  | "parallelogram"
+  | "hexagon"
+  | "cylinder"
+  | "document";
+
+/** Shapes that carry a flowchart meaning, drawn with their own proportions. */
+export const FLOW_SHAPE_SIZES: Partial<Record<ShapeKind, { w: number; h: number }>> = {
+  stadium: { w: 180, h: 64 },
+  diamond: { w: 160, h: 120 },
+  parallelogram: { w: 190, h: 90 },
+  hexagon: { w: 190, h: 90 },
+  cylinder: { w: 150, h: 120 },
+  document: { w: 180, h: 110 },
+};
+
 /** Ink colours, mapped onto the muted series hues so both themes stay legible. */
 export type WbColor = "default" | "blue" | "green" | "amber" | "red" | "purple" | "teal";
 
@@ -49,7 +77,7 @@ export interface WbData extends Record<string, unknown> {
   // sticky
   tone?: "plain" | "warm" | "cool";
   // shapes
-  shape?: "rect" | "rounded" | "circle" | "line" | "arrow";
+  shape?: ShapeKind;
   flip?: boolean;
   /** Line/arrow: run from the far end back to the start. */
   reverse?: boolean;
@@ -85,6 +113,12 @@ export interface WbData extends Record<string, unknown> {
 export type WbNode = Node<WbData, WbNodeType>;
 
 export interface WbEdgeData extends Record<string, unknown> {
+  /**
+   * Pick the handles from where the two objects sit, and keep picking as they
+   * move. On for connectors drawn from now on; connectors from before it
+   * existed keep the sides they were drawn on until this is switched on.
+   */
+  auto?: boolean;
   directed?: boolean;
   both?: boolean;
   line?: "solid" | "dashed" | "dotted";
@@ -124,7 +158,10 @@ export function makeNode(type: WbNodeType, position: { x: number; y: number }, d
     s = size ?? { w: px, h: px };
     base.tone = getSetting("wb.stickyTone");
   }
-  if (type === "shape") base.shape = "rounded";
+  if (type === "shape") {
+    base.shape = data.shape ?? "rounded";
+    s = size ?? FLOW_SHAPE_SIZES[base.shape] ?? DEFAULT_SIZES.shape;
+  }
   if (type === "area") base.label = "Area";
   return {
     id: newNodeId(),
@@ -138,7 +175,54 @@ export function makeNode(type: WbNodeType, position: { x: number; y: number }, d
 }
 
 export function edgeDefaults(): WbEdgeData {
-  return { directed: getSetting("wb.connectorArrow"), line: "solid", path: getSetting("wb.connectorStyle") };
+  return { auto: true, directed: getSetting("wb.connectorArrow"), line: "solid", path: getSetting("wb.connectorStyle") };
+}
+
+/** Handle ids, matching the four `Handle`s every node renders. */
+type Side = "t" | "r" | "b" | "l";
+
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * The sides of two boxes that face each other. Whichever axis they are
+ * further apart on wins, so a connector leaves and arrives square-on instead
+ * of looping around a corner.
+ */
+export function facingSides(a: Box, b: Box): { source: Side; target: Side } {
+  const dx = b.x + b.w / 2 - (a.x + a.w / 2);
+  const dy = b.y + b.h / 2 - (a.y + a.h / 2);
+  // Overlapping horizontally is a stronger hint than a slightly bigger gap.
+  const gapX = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w));
+  const gapY = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h));
+  const horizontal = gapX > gapY || (gapX === gapY && Math.abs(dx) > Math.abs(dy));
+  if (horizontal) return dx >= 0 ? { source: "r", target: "l" } : { source: "l", target: "r" };
+  return dy >= 0 ? { source: "b", target: "t" } : { source: "t", target: "b" };
+}
+
+const boxOf = (n: WbNode, byId: Map<string, WbNode>): Box => {
+  const p = absolutePosition(n, byId);
+  const { w, h } = sizeOf(n);
+  return { x: p.x, y: p.y, w, h };
+};
+
+/**
+ * Re-points an automatic connector at the sides its two objects now face.
+ * Returns the edge untouched when nothing changes, so React Flow keeps
+ * skipping edges that have not moved.
+ */
+export function autoRoute(e: WbEdge, byId: Map<string, WbNode>): WbEdge {
+  if (!e.data?.auto) return e;
+  const a = byId.get(e.source);
+  const b = byId.get(e.target);
+  if (!a || !b) return e;
+  const { source, target } = facingSides(boxOf(a, byId), boxOf(b, byId));
+  if (e.sourceHandle === source && e.targetHandle === target) return e;
+  return { ...e, sourceHandle: source, targetHandle: target };
 }
 
 /** React Flow requires parents before children. */

@@ -75,11 +75,12 @@ import { EmptyState, Skeleton } from "@/components/ui/Controls";
 import { isTextInput } from "@/lib/shortcuts";
 import { openTask } from "@/features/tasks/menu";
 import { openShare } from "@/features/share/open";
-import { NODE_TYPES, WbContext } from "./nodes";
+import { NODE_TYPES, WbContext, shapeFigure } from "./nodes";
 import { EDGE_TYPES, withMarkers } from "./edges";
 import { EdgeApiContext } from "./edgeContext";
 import {
   absolutePosition,
+  autoRoute,
   colorVar,
   edgeDefaults,
   fromRecords,
@@ -99,6 +100,8 @@ import {
 } from "./model";
 import { Toolbar, TopBar, type ShapeKind, type Tool } from "./Toolbar";
 import { PropsPanel } from "./PropsPanel";
+import { MermaidDialog } from "./MermaidDialog";
+import { chartToScene, toMermaid, type MermaidChart } from "./mermaid";
 import { inkHit, inkPath, makeDrawing } from "./ink";
 import { baselineOf, commit as commitBaseline, diff as diffScene, isEmpty, merge as mergeScene } from "./collab";
 import { onEphemeral, sendEphemeral, setPresence } from "@/features/cloud/realtime";
@@ -134,6 +137,9 @@ const DRAW_MIN: Partial<Record<WbNodeType, [number, number]>> = {
 const EDITABLE = new Set<WbNodeType>(["text", "sticky", "shape", "area", "link"]);
 
 const isLineTool = (t: Tool) => t === "shape:line" || t === "shape:arrow";
+
+/** One click for the labels a decision branch almost always needs. */
+const BRANCH_LABELS = ["Yes", "No", "Otherwise"];
 
 /** Shift while dragging: square boxes, 45° lines. */
 function constrain(a: Pt, b: Pt, line: boolean): Pt {
@@ -193,6 +199,7 @@ function Editor({ scene, projectId }: { scene: WhiteboardScene; projectId: strin
   const [editingEdge, setEditingEdge] = useState<string | null>(null);
   const [spacePan, setSpacePan] = useState(false);
   const [showMap, setShowMap] = useState(false);
+  const [mermaidOpen, setMermaidOpen] = useState(false);
   const [guides, setGuides] = useState<{ x?: number; y?: number }>({});
   const [selection, setSelection] = useState<{ nodes: string[]; edges: string[] }>({ nodes: [], edges: [] });
   const [menu, setMenu] = useState<{ kind: "node" | "edge" | "pane"; id?: string; flow: { x: number; y: number } } | null>(null);
@@ -1196,8 +1203,22 @@ function Editor({ scene, projectId }: { scene: WhiteboardScene; projectId: strin
           label: "Path",
           items: (["smooth", "straight", "step"] as const).map((p) => ({ label: { smooth: "Curved", straight: "Straight", step: "Elbow" }[p], checked: (d.path ?? "smooth") === p, onSelect: () => updateEdge(e.id, { path: p }) })),
         },
+        {
+          label: "Route automatically",
+          checked: !!d.auto,
+          onSelect: () => updateEdge(e.id, { auto: !d.auto }),
+        },
         // Defer past the menu's close so its focus restore doesn't blur the label input.
         { label: d.label ? "Edit label" : "Add label", icon: Pencil, onSelect: () => window.setTimeout(() => setEditingEdge(e.id), 0) },
+        {
+          type: "submenu",
+          label: "Branch label",
+          items: [
+            ...BRANCH_LABELS.map((l) => ({ label: l, checked: d.label === l, onSelect: () => updateEdge(e.id, { label: d.label === l ? undefined : l }) })),
+            { type: "separator" as const },
+            { label: "Clear", disabled: !d.label, onSelect: () => updateEdge(e.id, { label: undefined }) },
+          ],
+        },
         { type: "separator" },
         {
           label: "Delete connector",
@@ -1321,6 +1342,27 @@ function Editor({ scene, projectId }: { scene: WhiteboardScene; projectId: strin
     }
   };
 
+  // ------------------------------------------------------------ Mermaid
+  // Flowcharts travel as Mermaid text, so a board can start as something
+  // somebody pasted and leave as something somebody else can read.
+
+  const importMermaid = (chart: MermaidChart) => {
+    const scene = chartToScene(chart, { x: 0, y: 0 }, { node: newNodeId, edge: newEdgeId }, edgeDefaults());
+    pasteSnap(scene, viewCenter());
+    toast(`Added ${scene.nodes.length} ${scene.nodes.length === 1 ? "shape" : "shapes"} from Mermaid`);
+  };
+
+  const copyMermaid = async () => {
+    const { text, included, skipped } = toMermaid(nodesRef.current.map(clean), edgesRef.current);
+    if (!included) return toast("Nothing here becomes a flowchart yet");
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(skipped ? `Copied ${included} as Mermaid; ${skipped} object${skipped === 1 ? "" : "s"} have no equivalent` : `Copied ${included} ${included === 1 ? "shape" : "shapes"} as Mermaid`);
+    } catch (e) {
+      toastError(describeError(e, "Couldn't copy to the clipboard."));
+    }
+  };
+
   const exportJson = async () => {
     flush();
     const name = scene.whiteboard.name.replace(/[<>:"/\\|?*]/g, "_");
@@ -1365,7 +1407,24 @@ function Editor({ scene, projectId }: { scene: WhiteboardScene; projectId: strin
   };
 
   // ------------------------------------------------------------ render
-  const displayEdges = useMemo(() => edges.map((e) => withMarkers(e, e.selected ? "var(--text)" : "var(--text-3)")), [edges]);
+  // Automatic connectors re-point at the sides their objects now face, which
+  // means re-deriving them on every drag frame. The cache keeps the object
+  // identity of edges that did not actually change, so React Flow carries on
+  // skipping their re-render.
+  const edgeCache = useRef(new Map<string, { from: WbEdge; out: WbEdge }>());
+  const displayEdges = useMemo(() => {
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const next = new Map<string, { from: WbEdge; out: WbEdge }>();
+    const out = edges.map((e) => {
+      const routed = autoRoute(e, byId);
+      const hit = edgeCache.current.get(e.id);
+      const display = hit && hit.from === routed ? hit.out : withMarkers(routed, e.selected ? "var(--text)" : "var(--text-3)");
+      next.set(e.id, { from: routed, out: display });
+      return display;
+    });
+    edgeCache.current = next;
+    return out;
+  }, [edges, nodes]);
   const transform = useStore((st) => st.transform);
   const placing = tool !== "select" && tool !== "hand" && tool !== "connector" && tool !== "pen" && tool !== "eraser";
   const panWithLeft = tool === "hand" || spacePan;
@@ -1385,7 +1444,9 @@ function Editor({ scene, projectId }: { scene: WhiteboardScene; projectId: strin
     const w = Math.abs(b.x - a.x);
     const h = Math.abs(b.y - a.y);
     if (tool === "shape:circle") return <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} {...common} />;
-    return <rect x={x} y={y} width={w} height={h} rx={tool === "shape:rect" ? 2 : 10} {...common} />;
+    if (tool.startsWith("shape:"))
+      return <g transform={`translate(${x} ${y})`}>{shapeFigure(tool.slice(6) as ShapeKind, w, h, common)}</g>;
+    return <rect x={x} y={y} width={w} height={h} rx={10} {...common} />;
   };
 
   return (
@@ -1507,8 +1568,9 @@ function Editor({ scene, projectId }: { scene: WhiteboardScene; projectId: strin
                 onFit={fit}
                 showMap={showMap}
                 onToggleMap={() => setShowMap(!showMap)}
-                onExport={(k) => (k === "json" ? void exportJson() : void exportImage(k))}
-                onImport={async () => {
+                onExport={(k) => (k === "json" ? void exportJson() : k === "mermaid" ? void copyMermaid() : void exportImage(k))}
+                onImport={async (kind) => {
+                  if (kind === "mermaid") return setMermaidOpen(true);
                   const f = await openDialog({ filters: [{ name: "Whiteboard JSON", extensions: ["json"] }] });
                   if (typeof f !== "string") return;
                   try {
@@ -1520,6 +1582,7 @@ function Editor({ scene, projectId }: { scene: WhiteboardScene; projectId: strin
                   }
                 }}
               />
+              <MermaidDialog open={mermaidOpen} onOpenChange={setMermaidOpen} onImport={importMermaid} />
               {!readOnly && (selection.nodes.length > 0 || selection.edges.length > 0) && (
                 <PropsPanel
                   nodes={nodes.filter((n) => selection.nodes.includes(n.id))}

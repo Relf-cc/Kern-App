@@ -32,6 +32,7 @@ import { deleteTasks, duplicateTask, quickDates, reorderTasks, rescheduleTasks, 
 import { QuickAdd } from "./QuickAdd";
 import { BulkBar } from "./BulkBar";
 import { isTextInput } from "@/lib/shortcuts";
+import { AUTO_SCROLL, restrictToVertical } from "@/components/layout/sortable";
 import { MenuContent } from "@/components/ui/Menu";
 import { useFlip } from "@/hooks/useFlip";
 
@@ -399,7 +400,9 @@ export function TaskList({
     );
   } else if (sortable) {
     body = (
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+      // The row only ever moves on the list's axis: a free horizontal transform
+      // grows the scroller, which auto-scrolls, which lets it grow again.
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd} modifiers={[restrictToVertical]} autoScroll={AUTO_SCROLL}>
         {ordered.map((s) => (
           <SortableContext key={s.key} items={s.tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
             <div className="task-list__section">

@@ -304,6 +304,66 @@ export const AreaNode = memo(function AreaNode({ id, data, selected }: NodeProps
 
 // ------------------------------------------------------------- shape
 
+interface Paint {
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  strokeDasharray: string | undefined;
+}
+
+/**
+ * The outline of a closed shape, in the node's own width/height coordinates.
+ * The flowchart shapes keep their slants and notches proportional but
+ * capped, so a wide box does not turn into a sliver.
+ */
+export function shapeFigure(shape: NonNullable<WbData["shape"]>, w: number, h: number, paint: Paint): ReactNode {
+  const poly = (pts: [number, number][]) => <polygon points={pts.map(([x, y]) => `${x},${y}`).join(" ")} {...paint} />;
+  const slant = Math.min(w * 0.22, 30);
+  switch (shape) {
+    case "stadium":
+      return <rect x={1} y={1} width={w - 2} height={h - 2} rx={Math.max(2, Math.min(w, h) / 2 - 1)} {...paint} />;
+    case "diamond":
+      return poly([
+        [w / 2, 1],
+        [w - 1, h / 2],
+        [w / 2, h - 1],
+        [1, h / 2],
+      ]);
+    case "parallelogram":
+      return poly([
+        [slant, 1],
+        [w - 1, 1],
+        [w - slant, h - 1],
+        [1, h - 1],
+      ]);
+    case "hexagon":
+      return poly([
+        [slant, 1],
+        [w - slant, 1],
+        [w - 1, h / 2],
+        [w - slant, h - 1],
+        [slant, h - 1],
+        [1, h / 2],
+      ]);
+    case "cylinder": {
+      // An open-topped body (SVG closes it for the fill) with the disc on top.
+      const r = Math.max(4, Math.min(h * 0.16, 20));
+      return (
+        <>
+          <path d={`M1 ${r} V ${h - r} A ${w / 2 - 1} ${r} 0 0 0 ${w - 1} ${h - r} V ${r}`} {...paint} />
+          <ellipse cx={w / 2} cy={r} rx={w / 2 - 1} ry={r} {...paint} />
+        </>
+      );
+    }
+    case "document": {
+      const wave = Math.max(6, Math.min(h * 0.16, 18));
+      return <path d={`M1 1 H ${w - 1} V ${h - wave} C ${w * 0.7} ${h + wave * 0.6}, ${w * 0.3} ${h - wave * 2.6}, 1 ${h - wave} Z`} {...paint} />;
+    }
+    default:
+      return <rect x={1} y={1} width={w - 2} height={h - 2} rx={shape === "rounded" ? 14 : 2} {...paint} />;
+  }
+}
+
 export const ShapeNode = memo(function ShapeNode({ id, data, selected, width, height }: NodeProps<WbNode>) {
   const { update } = useWb();
   const [label, setLabel] = useState(data.label ?? "");
@@ -331,13 +391,17 @@ export const ShapeNode = memo(function ShapeNode({ id, data, selected, width, he
         <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={stroke} strokeWidth={2} strokeDasharray={dash} markerEnd={shape === "arrow" ? `url(#arrow-${id})` : undefined} />
       </>
     );
-  } else el = <rect x={1} y={1} width={w - 2} height={h - 2} rx={shape === "rounded" ? 14 : 2} fill={fill} stroke={stroke} strokeWidth={1.75} strokeDasharray={dash} />;
+  } else {
+    const paint = { fill, stroke, strokeWidth: 1.75, strokeDasharray: dash };
+    el = shapeFigure(shape, w, h, paint);
+  }
   return (
     <>
       <Resizer selected={selected} data={data} min={[20, 8]} />
       {!isLine && <Handles />}
       <div
         className="wbn wbn--shape"
+        data-shape={shape}
         data-line={isLine || undefined}
         data-locked={data.locked}
         onDoubleClick={() => {

@@ -38,14 +38,53 @@ import {
   Ellipsis,
   RectangleHorizontal,
   Flag,
+  Diamond,
+  Cylinder,
+  Copy,
+  ClipboardPaste,
+  type LucideIcon,
+  type LucideProps,
 } from "lucide-react";
+import { forwardRef } from "react";
 import { IconButton } from "@/components/ui/Button";
 import { Dropdown } from "@/components/ui/Menu";
 import { Segmented } from "@/components/ui/Controls";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { WB_COLORS, type WbColor } from "./model";
+import { WB_COLORS, type ShapeKind, type WbColor } from "./model";
 
-export type ShapeKind = "rect" | "rounded" | "circle" | "line" | "arrow";
+export type { ShapeKind };
+
+/**
+ * Icons for the flowchart shapes lucide has no match for. Each one is the
+ * shape itself, drawn to lucide's proportions so the picker reads at a
+ * glance.
+ */
+const shapeIcon = (name: string, d: string): LucideIcon => {
+  const Icon = forwardRef<SVGSVGElement, LucideProps>(({ size, strokeWidth = 2, ...rest }, ref) => (
+    <svg
+      ref={ref}
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...rest}
+    >
+      <path d={d} />
+    </svg>
+  ));
+  Icon.displayName = name;
+  return Icon as unknown as LucideIcon;
+};
+
+const StadiumIcon = shapeIcon("Stadium", "M8 6h8a6 6 0 0 1 0 12H8A6 6 0 0 1 8 6Z");
+const ParallelogramIcon = shapeIcon("Parallelogram", "M8 6h13l-5 12H3Z");
+const FlowHexagonIcon = shapeIcon("FlowHexagon", "M7 6h10l4 6-4 6H7l-4-6Z");
+const DocumentIcon = shapeIcon("Document", "M3 5h18v11c-3 0-4.5 2.5-9 2.5S6 16 3 16Z");
 
 export type Tool =
   | "select"
@@ -64,13 +103,34 @@ export type Tool =
   | "eraser"
   | `shape:${ShapeKind}`;
 
-export const SHAPES: { value: ShapeKind; label: string; icon: typeof Square }[] = [
+export interface ShapeOption {
+  value: ShapeKind;
+  label: string;
+  icon: LucideIcon;
+  /** What the shape means on a flowchart, where it has one. */
+  hint?: string;
+}
+
+/** The general-purpose shapes, offered first. */
+export const BASIC_SHAPES: ShapeOption[] = [
   { value: "rect", label: "Rectangle", icon: Square },
   { value: "rounded", label: "Rounded rectangle", icon: RectangleHorizontal },
   { value: "circle", label: "Circle", icon: Circle },
   { value: "line", label: "Line", icon: Minus },
   { value: "arrow", label: "Arrow", icon: ArrowRight },
 ];
+
+/** The standard flowchart vocabulary. */
+export const FLOW_SHAPES: ShapeOption[] = [
+  { value: "stadium", label: "Terminator", icon: StadiumIcon, hint: "Start or end" },
+  { value: "diamond", label: "Decision", icon: Diamond, hint: "Branch on a question" },
+  { value: "parallelogram", label: "Data", icon: ParallelogramIcon, hint: "Input or output" },
+  { value: "hexagon", label: "Preparation", icon: FlowHexagonIcon, hint: "Set-up step" },
+  { value: "cylinder", label: "Database", icon: Cylinder, hint: "Stored data" },
+  { value: "document", label: "Document", icon: DocumentIcon, hint: "Printed or written output" },
+];
+
+export const SHAPES: ShapeOption[] = [...BASIC_SHAPES, ...FLOW_SHAPES];
 
 export const PEN_WIDTHS = [
   { value: "2", label: "Fine" },
@@ -159,7 +219,15 @@ export function Toolbar({
         {btn("sticky", StickyNote, "Sticky note", "S")}
         <span className="wb-split">
           <IconButton icon={shown.icon} label={`${shown.label} - click or drag to draw`} shortcut="R" tooltipSide="top" active={shapeActive} onClick={() => onTool(`shape:${shown.value}`)} />
-          <Dropdown side="top" items={SHAPES.map((x) => ({ label: x.label, icon: x.icon, checked: shown.value === x.value, onSelect: () => onTool(`shape:${x.value}`) }))}>
+          <Dropdown
+            side="top"
+            items={[
+              ...BASIC_SHAPES.map((x) => ({ label: x.label, icon: x.icon, checked: shown.value === x.value, onSelect: () => onTool(`shape:${x.value}`) })),
+              { type: "separator" as const },
+              { type: "label" as const, label: "Flowchart" },
+              ...FLOW_SHAPES.map((x) => ({ label: x.label, icon: x.icon, checked: shown.value === x.value, onSelect: () => onTool(`shape:${x.value}`) })),
+            ]}
+          >
             <button type="button" className="wb-split__caret" aria-label="Choose shape">
               <ChevronUp strokeWidth={2} />
             </button>
@@ -218,8 +286,8 @@ export function TopBar({
   onFit: () => void;
   showMap: boolean;
   onToggleMap: () => void;
-  onExport: (kind: "png" | "svg" | "json" | "share") => void;
-  onImport: () => void;
+  onExport: (kind: "png" | "svg" | "json" | "share" | "mermaid") => void;
+  onImport: (kind: "json" | "mermaid") => void;
 }) {
   return (
     <div className="wb-topbar" onContextMenu={stop} onDoubleClick={(e) => e.stopPropagation()}>
@@ -238,8 +306,10 @@ export function TopBar({
           { label: "Export PNG…", icon: Download, onSelect: () => onExport("png") },
           { label: "Export SVG…", icon: Download, onSelect: () => onExport("svg") },
           { label: "Export JSON…", icon: Download, onSelect: () => onExport("json") },
+          { label: "Copy as Mermaid", icon: Copy, onSelect: () => onExport("mermaid") },
           { type: "separator" },
-          { label: "Import JSON…", icon: Upload, onSelect: onImport },
+          { label: "Import JSON…", icon: Upload, onSelect: () => onImport("json") },
+          { label: "Paste Mermaid…", icon: ClipboardPaste, onSelect: () => onImport("mermaid") },
         ]}
       >
         <IconButton icon={Ellipsis} label="Export & import" size="sm" noTooltip />

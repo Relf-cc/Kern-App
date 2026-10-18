@@ -249,25 +249,43 @@ input[type="number"]::-webkit-outer-spin-button {
   height: 0;
 }
 
-/* ---------- Easter eggs (src/app/easterEggs.ts) */
-.egg-confetti {
+/* ---------- Confetti (src/lib/confetti.ts) */
+.confetti {
   position: fixed;
   inset: 0;
   z-index: 9999;
   pointer-events: none;
   overflow: hidden;
 }
-.egg-confetti i {
+.confetti i {
   position: absolute;
   top: -20px;
   border-radius: 2px;
-  animation: egg-fall var(--t) cubic-bezier(0.25, 0.6, 0.4, 1) var(--d) forwards;
+  animation: confetti-fall var(--t) cubic-bezier(0.25, 0.6, 0.4, 1) var(--d) forwards;
 }
-@keyframes egg-fall {
+@keyframes confetti-fall {
   to {
     transform: translate(var(--dx), 105vh) rotate(var(--r));
   }
 }
+/* A burst from a point: each piece sits at the origin and is thrown outwards. */
+.confetti--point i {
+  top: 0;
+  margin: -3px 0 0 -3px;
+  animation-name: confetti-throw;
+  animation-timing-function: cubic-bezier(0.1, 0.75, 0.3, 1);
+}
+@keyframes confetti-throw {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--dx), var(--dy)) rotate(var(--r));
+  }
+}
+
+/* ---------- Easter eggs (src/app/easterEggs.ts) */
 .egg-rainbow #root {
   animation: egg-hue 2s linear 2;
 }

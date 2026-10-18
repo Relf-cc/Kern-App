@@ -62,6 +62,9 @@ export interface Settings {
   "interaction.completionIntensity": CompletionIntensity;
   "interaction.createInterface": "composer" | "quick";
   "interaction.rememberTaskProps": boolean;
+  // Writing
+  /** Underline misspelled words in notes, with corrections on right-click. */
+  "editor.spellcheck": boolean;
   // Appearance
   "appearance.theme": Theme;
   "appearance.accent": Accent;
@@ -115,6 +118,8 @@ export interface Settings {
   "projects.resume": "resume" | "overview" | "lastTab" | "ask";
   "boards.defaultCardDensity": "compact" | "expanded";
   "boards.columnWidth": number;
+  /** Confetti when a card is completed or dropped into a done column. */
+  "boards.celebrate": boolean;
   // Whiteboards
   "wb.snapToGrid": boolean;
   "wb.showGrid": boolean;
@@ -271,6 +276,8 @@ export const DEFAULTS: Settings = {
   "interaction.createInterface": "composer",
   "interaction.rememberTaskProps": true,
 
+  "editor.spellcheck": true,
+
   "appearance.theme": "dark",
   "appearance.accent": "none",
   "appearance.font": "inter",
@@ -328,6 +335,7 @@ export const DEFAULTS: Settings = {
   "projects.resume": "resume",
   "boards.defaultCardDensity": "compact",
   "boards.columnWidth": 288,
+  "boards.celebrate": true,
 
   "wb.snapToGrid": false,
   "wb.showGrid": true,

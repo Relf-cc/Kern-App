@@ -334,6 +334,28 @@ Details that aren't obvious from the code:
   between keys in the same organisation after a pool-wide limit, and is bounded.
 - **GitHub issues**: two-way, three-way-merged per field (newer edit wins when
   both sides changed). Deleting a task unlinks it; it never closes the issue.
+- **Spelling** (`editor.spellcheck`, on): WebView2 draws the red underline but
+  its context menu offers no corrections, so on Windows Kern does both itself.
+  `domain/spelling.rs` runs one thread that holds an `ISpellChecker` from the
+  OS Spell Checking API — the computer's own dictionaries, nothing downloaded,
+  nothing sent — and `features/notes/spellcheck.ts` underlines the runs it
+  reports and offers suggestions, "Add to dictionary" (which writes to the
+  user's own dictionary) and "Ignore for now" on right-click. Offsets are
+  UTF-16 code units on both sides. `spell_supported` is false on macOS and
+  Linux, whose webviews offer corrections in their native menu, and on a
+  Windows install with no dictionary; there Kern leaves the `spellcheck`
+  attribute on and stays out of the way. Results are cached per block of text,
+  so editing, undo and reopening a note cost nothing.
+- **Flowcharts**: the shape tool draws the standard vocabulary (terminator,
+  decision, data, preparation, database, document) beside the general shapes,
+  and connectors can **route automatically** — `autoRoute` in
+  `features/whiteboard/model.ts` re-points them at whichever sides their two
+  objects now face, live as you drag. It is on for connectors drawn from now
+  on and for Mermaid imports; older ones keep the sides they were drawn on
+  until it is switched on from the connector's menu. `features/whiteboard/
+  mermaid.ts` reads and writes Mermaid `flowchart`/`graph` text (shapes, arrow
+  styles, both label forms, chains and `&` fan-outs) and ranks the graph into
+  a layout; it never throws, returning a sentence for anything it can't read.
 
 ### Kern Lite
 

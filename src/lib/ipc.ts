@@ -487,6 +487,18 @@ export const api = {
     /** Notes that link to a note, task or project. */
     backlinks: (kind: "note" | "task" | "project", id: string) => call<T.Backlink[]>("note_backlinks", { kind, id }),
   },
+  /**
+   * Spelling, from the operating system's own dictionaries. Only Windows
+   * needs this - the other webviews offer corrections themselves - so
+   * `supported` tells the editor whether to take over from the webview.
+   */
+  spell: {
+    supported: () => call<boolean>("spell_supported"),
+    check: (texts: string[]) => call<T.SpellRange[][]>("spell_check", { texts }),
+    suggest: (word: string) => call<string[]>("spell_suggest", { word }),
+    add: (word: string) => call<void>("spell_add", { word }),
+    ignore: (word: string) => call<void>("spell_ignore", { word }),
+  },
   inbox: {
     list: () => call<T.InboxItem[]>("inbox_list"),
     add: (content: string, kind?: T.InboxItem["kind"]) => call<T.InboxItem>("inbox_add", { content, kind: kind ?? null }),

@@ -5,7 +5,7 @@
 
 import { Checkbox as RCheckbox, Select as RSelect, Slider as RSlider, Switch as RSwitch, Popover as RPopover } from "radix-ui";
 import { Check, ChevronDown, Minus, type LucideIcon } from "lucide-react";
-import type { CSSProperties, ReactElement, ReactNode } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement, ReactNode } from "react";
 import { Tooltip } from "./Tooltip";
 
 export function Switch({
@@ -63,7 +63,8 @@ export function TaskCheck({
   size,
 }: {
   checked: boolean;
-  onToggle: () => void;
+  /** The click is passed through so callers can anchor an effect to the control. */
+  onToggle: (e?: ReactMouseEvent<HTMLButtonElement>) => void;
   priority?: number;
   blocked?: boolean;
   /** Closed without being done (cancelled or duplicate): shows a cross. */
@@ -84,7 +85,7 @@ export function TaskCheck({
       style={size ? ({ "--size": `${size}px` } as CSSProperties) : undefined}
       onClick={(e) => {
         e.stopPropagation();
-        onToggle();
+        onToggle(e);
       }}
       onPointerDown={(e) => e.stopPropagation()}
     >

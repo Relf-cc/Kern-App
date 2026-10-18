@@ -622,6 +622,36 @@
   max-height: 300px;
   min-width: 210px;
 }
+
+/* ---------- Spelling (src/features/notes/spellcheck.ts)
+   Our own underline, drawn where the webview offers no corrections of its
+   own; elsewhere the webview keeps drawing it and this never appears. */
+.prose .spell-error {
+  text-decoration: underline wavy var(--danger);
+  text-decoration-thickness: 1px;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
+  cursor: context-menu;
+}
+.spell-menu {
+  min-width: 200px;
+  max-width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.spell-menu .menu__item {
+  width: 100%;
+  text-align: left;
+  cursor: default;
+}
+.spell-menu button.menu__item:hover,
+.spell-menu button.menu__item:focus-visible {
+  background: var(--hover-strong);
+}
+.spell-menu button.menu__item:hover > svg,
+.spell-menu button.menu__item:focus-visible > svg {
+  color: var(--text);
+}
 .prose h1 {
   font-size: 1.55em;
   font-weight: 650;

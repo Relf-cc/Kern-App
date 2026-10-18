@@ -23,9 +23,9 @@ import {
   ArrowLeftRight,
 } from "lucide-react";
 import { COLORABLE, type WbData, type WbEdge, type WbEdgeData, type WbNode } from "./model";
-import { PEN_WIDTHS, SHAPES, Swatches } from "./Toolbar";
+import { BASIC_SHAPES, FLOW_SHAPES, PEN_WIDTHS, Swatches } from "./Toolbar";
 import { IconButton } from "@/components/ui/Button";
-import { Segmented, Switch } from "@/components/ui/Controls";
+import { Segmented, Select, Switch } from "@/components/ui/Controls";
 
 const TYPE_LABEL: Record<string, string> = {
   text: "Text card",
@@ -118,11 +118,15 @@ export function PropsPanel({
       {single?.type === "shape" && (
         <>
           <Field label="Shape">
-            <Segmented
-              size="sm"
+            <Select
               value={single.data.shape ?? "rounded"}
               onChange={(v) => onUpdateNode(single.id, { shape: v })}
-              options={SHAPES.map((x) => ({ value: x.value, icon: x.icon, tooltip: x.label }))}
+              ariaLabel="Shape"
+              style={{ minWidth: 148 }}
+              options={[
+                ...BASIC_SHAPES.map((x) => ({ value: x.value, label: x.label })),
+                ...FLOW_SHAPES.map((x) => ({ value: x.value, label: `${x.label} - ${x.hint}` })),
+              ]}
             />
           </Field>
           <Field label="Stroke">
@@ -211,6 +215,13 @@ export function PropsPanel({
                 { value: "straight", label: "Line" },
                 { value: "step", label: "Elbow" },
               ]}
+            />
+          </Field>
+          <Field label="Routing">
+            <Switch
+              checked={!!edge.data?.auto}
+              onChange={(v) => onUpdateEdge(edge.id, { auto: v })}
+              label="Follow the sides the objects face"
             />
           </Field>
           <div className="col" style={{ gap: 4 }}>

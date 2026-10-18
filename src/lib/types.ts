@@ -2356,6 +2356,18 @@ export interface Backlink {
   updatedAt: number;
 }
 
+/**
+ * One misspelled run inside a block of text. `start` and `len` are UTF-16
+ * code units from the start of that block, which is what JavaScript string
+ * indexes count too.
+ */
+export interface SpellRange {
+  start: number;
+  len: number;
+  /** The one right answer when the checker is certain; "" means delete the run. */
+  replacement: string | null;
+}
+
 export type ShareKind = "note" | "whiteboard" | "project";
 
 export interface ShareLink {

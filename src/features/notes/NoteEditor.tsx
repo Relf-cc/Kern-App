@@ -11,6 +11,7 @@ import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Markdown } from "tiptap-markdown";
 import { NoteFavicons } from "@/features/links/noteFavicons";
+import { Spellcheck, forgetWord, rescanSpelling, spellMarkAtCoords, spellcheckAvailable, type SpellMark } from "./spellcheck";
 import {
   Bold,
   Code,
@@ -28,6 +29,10 @@ import {
   Strikethrough,
   Plus,
   Pilcrow,
+  SpellCheck2,
+  BookPlus,
+  Ban,
+  Eraser,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -37,6 +42,8 @@ import { prompt } from "@/components/ui/Dialog";
 import { api } from "@/lib/ipc";
 import type { SearchHit } from "@/lib/types";
 import { navigate } from "@/stores/router";
+import { useSetting } from "@/stores/settings";
+import { useOutsideDismiss } from "@/hooks/useOutsideDismiss";
 import { openTask } from "@/features/tasks/menu";
 import { FileText, FolderKanban, SquareCheckBig, Link as LinkIcon } from "lucide-react";
 
@@ -55,6 +62,13 @@ export function openKernLink(href: string | null | undefined): boolean {
   else if (m[1] === "task") openTask(m[2]);
   else navigate({ name: "project", id: m[2] });
   return true;
+}
+
+interface SpellState {
+  mark: SpellMark;
+  /** Where the click landed, in viewport coordinates. */
+  x: number;
+  y: number;
 }
 
 interface LinkState {
@@ -108,6 +122,104 @@ function LinkPicker({ state, hits, onPick, onHover }: { state: LinkState; hits: 
           </div>
         );
       })}
+    </div>,
+    document.body,
+  );
+}
+
+// ------------------------------------------------------- spelling menu
+
+/**
+ * Corrections for the word that was right-clicked. The webview underlines
+ * misspellings on Windows but offers nothing to fix them, so this is the only
+ * way to take a suggestion there.
+ */
+function SpellMenu({ editor, state, onClose }: { editor: Editor; state: SpellState; onClose: () => void }) {
+  const { mark } = state;
+  const ref = useRef<HTMLDivElement>(null);
+  const [words, setWords] = useState<string[] | null>(null);
+  useOutsideDismiss(ref, true, onClose, () => mark.from);
+
+  useEffect(() => {
+    let live = true;
+    const done = (w: string[]) => live && setWords(w);
+    void api.spell
+      .suggest(mark.word)
+      .then(done)
+      .catch(() => done([]));
+    return () => {
+      live = false;
+    };
+  }, [mark.word]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const replace = (word: string) => {
+    onClose();
+    const range = { from: mark.from, to: mark.to };
+    const chain = editor.chain().focus();
+    // preserveWhitespace keeps the plain word plain instead of re-parsing it.
+    if (word) chain.insertContentAt(range, word, { parseOptions: { preserveWhitespace: true } });
+    else chain.deleteRange(range);
+    chain.run();
+  };
+
+  const remember = async (forever: boolean) => {
+    onClose();
+    try {
+      await (forever ? api.spell.add(mark.word) : api.spell.ignore(mark.word));
+    } catch {
+      // The word simply stays underlined; there is nothing to explain.
+      return;
+    }
+    forgetWord(mark.word);
+    rescanSpelling(editor.view);
+  };
+
+  // A certain answer ("teh" -> "the") leads; an empty one means the run is a
+  // repeat and should just go.
+  const repeat = mark.replacement === "";
+  const list = repeat ? [] : [...new Set([mark.replacement, ...(words ?? [])].filter((w): w is string => !!w))];
+
+  return createPortal(
+    <div
+      ref={ref}
+      className="menu spell-menu"
+      role="menu"
+      aria-label={`Spelling of ${mark.word}`}
+      style={{ position: "fixed", left: Math.min(state.x, window.innerWidth - 230), top: Math.min(state.y, window.innerHeight - 180) }}
+    >
+      {repeat ? (
+        <button type="button" className="menu__item" role="menuitem" onClick={() => replace("")}>
+          <Eraser strokeWidth={1.75} />
+          <span className="grow">Remove the repeated word</span>
+        </button>
+      ) : list.length ? (
+        list.map((w) => (
+          <button type="button" key={w} className="menu__item" role="menuitem" onClick={() => replace(w)}>
+            <SpellCheck2 strokeWidth={1.75} />
+            <span className="truncate grow">{w}</span>
+          </button>
+        ))
+      ) : (
+        <div className="menu__item" aria-disabled>
+          <SpellCheck2 strokeWidth={1.75} />
+          <span className="faint">{words ? "No corrections" : "Looking…"}</span>
+        </div>
+      )}
+      <div className="menu__sep" role="separator" />
+      <button type="button" className="menu__item" role="menuitem" onClick={() => void remember(true)}>
+        <BookPlus strokeWidth={1.75} />
+        <span className="grow">Add to dictionary</span>
+      </button>
+      <button type="button" className="menu__item" role="menuitem" onClick={() => void remember(false)}>
+        <Ban strokeWidth={1.75} />
+        <span className="grow">Ignore for now</span>
+      </button>
     </div>,
     document.body,
   );
@@ -252,6 +364,8 @@ export function NoteEditor({
   const hitsRef = useRef(hits);
   hitsRef.current = hits;
   const linkDismissedAt = useRef<number | null>(null);
+  const [spell, setSpell] = useState<SpellState | null>(null);
+  const spellOn = useSetting("editor.spellcheck");
   const linkQuery = linkPick?.query;
   useEffect(() => {
     if (linkQuery === undefined) return;
@@ -300,6 +414,7 @@ export function NoteEditor({
       NoteFavicons,
       Placeholder.configure({ placeholder }),
       Markdown.configure({ html: false, tightLists: true, linkify: true, transformPastedText: true, breaks: false }),
+      Spellcheck,
     ],
     content: initial,
     autofocus: autoFocus ? "end" : false,
@@ -345,6 +460,17 @@ export function NoteEditor({
         }
         return false;
       },
+      handleDOMEvents: {
+        // Right-clicking a misspelling offers corrections. Everything else
+        // keeps the webview's own menu (cut, copy, paste).
+        contextmenu: (view, event) => {
+          const m = spellMarkAtCoords(view, event.clientX, event.clientY);
+          if (!m) return false;
+          event.preventDefault();
+          setSpell({ mark: m, x: event.clientX, y: event.clientY });
+          return true;
+        },
+      },
       handleClick: (_view, _pos, event) => {
         const a = (event.target as HTMLElement).closest("a");
         // Links to notes, tasks and projects open with a click.
@@ -385,12 +511,13 @@ export function NoteEditor({
   editorRef.current = editor;
 
   // A fixed menu can't follow scrolling; close it instead.
-  const slashOpen = !!slash || !!linkPick;
+  const slashOpen = !!slash || !!linkPick || !!spell;
   useEffect(() => {
     if (!slashOpen) return;
     const close = () => {
       setSlash(null);
       setLinkPick(null);
+      setSpell(null);
     };
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
@@ -399,6 +526,22 @@ export function NoteEditor({
       window.removeEventListener("resize", close);
     };
   }, [slashOpen]);
+
+  // Our underline replaces the webview's. Where we have no checker (macOS,
+  // Linux, or Windows with no dictionary installed) the webview keeps its own,
+  // which offers corrections there anyway.
+  useEffect(() => {
+    if (!editor) return;
+    let live = true;
+    void spellcheckAvailable().then((ours) => {
+      if (!live || editor.isDestroyed) return;
+      editor.view.dom.setAttribute("spellcheck", ours && spellOn ? "false" : String(spellOn));
+      rescanSpelling(editor.view);
+    });
+    return () => {
+      live = false;
+    };
+  }, [editor, spellOn]);
 
   useEffect(() => {
     onEditor?.(editor);
@@ -424,6 +567,7 @@ export function NoteEditor({
       <EditorContent editor={editor} />
       {slash && <SlashMenu editor={editor} state={slash} onPick={(i) => pick(editor, i)} onHover={(i) => setSlash({ ...slash, index: i })} />}
       {linkPick && <LinkPicker state={linkPick} hits={hits} onPick={(h) => pickLink(editor, h)} onHover={(i) => setLinkPick({ ...linkPick, index: i })} />}
+      {spell && <SpellMenu editor={editor} state={spell} onClose={() => setSpell(null)} />}
     </>
   );
 }

@@ -415,6 +415,12 @@ pub fn run() {
             notes::inbox_restore,
             notes::inbox_convert,
             notes::note_backlinks,
+            // spelling
+            spelling::spell_supported,
+            spelling::spell_check,
+            spelling::spell_suggest,
+            spelling::spell_add,
+            spelling::spell_ignore,
             // templates
             templates::templates_list,
             templates::template_get,

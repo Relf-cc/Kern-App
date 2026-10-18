@@ -46,6 +46,7 @@ pub mod search;
 pub mod services;
 pub mod sessions;
 pub mod settings;
+pub mod spelling;
 pub mod stats;
 pub mod storage;
 pub mod system;
