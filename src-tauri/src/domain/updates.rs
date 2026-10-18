@@ -20,9 +20,9 @@ use serde_json::Value;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
-const MANIFEST_URL: &str = "https://github.com/ChristianRelf/KERN/releases/latest/download/latest.json";
-const RELEASES_API: &str = "https://api.github.com/repos/ChristianRelf/KERN/releases";
-pub const RELEASES_PAGE: &str = "https://github.com/ChristianRelf/KERN/releases";
+const MANIFEST_URL: &str = "https://github.com/Relf-cc/Kern-App/releases/latest/download/latest.json";
+const RELEASES_API: &str = "https://api.github.com/repos/Relf-cc/Kern-App/releases";
+pub const RELEASES_PAGE: &str = "https://github.com/Relf-cc/Kern-App/releases";
 
 /// Marks a security release: written at the top of its notes (an HTML
 /// comment, so invisible on GitHub). `npm run release -- --security` adds it.
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn offers_a_newer_release() {
         let i = info(json!({ "version": "0.1.12", "notes": "Fixes" }), "0.1.11");
-        assert_eq!((i.latest.as_deref(), i.security, i.url.as_str()), (Some("0.1.12"), false, "https://github.com/ChristianRelf/KERN/releases/tag/v0.1.12"));
+        assert_eq!((i.latest.as_deref(), i.security, i.url.as_str()), (Some("0.1.12"), false, "https://github.com/Relf-cc/Kern-App/releases/tag/v0.1.12"));
         assert!(info(json!({ "version": "0.1.12" }), "0.1.12").latest.is_none());
         assert!(info(json!({ "version": "0.1.11" }), "0.1.12").latest.is_none());
         assert!(info(json!({ "version": "nightly" }), "0.1.12").latest.is_none());
@@ -244,7 +244,7 @@ mod tests {
         let v = parse("0.2.0").unwrap();
         let n = notes_from_release(&json!({ "name": "", "body": "## What's new", "html_url": "u", "published_at": "2026-10-14T00:00:00Z" }), &v);
         assert_eq!((n.name.as_str(), n.body.as_str(), n.url.as_str()), ("Kern 0.2.0", "## What's new", "u"));
-        assert_eq!(notes_from_release(&json!({}), &v).url, "https://github.com/ChristianRelf/KERN/releases/tag/v0.2.0");
+        assert_eq!(notes_from_release(&json!({}), &v).url, "https://github.com/Relf-cc/Kern-App/releases/tag/v0.2.0");
     }
 
     #[test]

@@ -6,7 +6,7 @@ subscription, and nothing is sent anywhere unless you turn it on. When you want
 to, **Kern Cloud** (free) syncs a personal space across your devices and lets you
 collaborate with others in shared workspaces, in real time.
 
-**[⬇ Download Kern for Windows or Linux](https://github.com/ChristianRelf/KERN/releases/latest)**
+**[⬇ Download Kern for Windows or Linux](https://github.com/Relf-cc/Kern-App/releases/latest)**
 
 ## What you can do with it
 
@@ -39,7 +39,7 @@ collaborate with others in shared workspaces, in real time.
 ## Install
 
 Download the file for your system from the
-[latest release](https://github.com/ChristianRelf/KERN/releases/latest).
+[latest release](https://github.com/Relf-cc/Kern-App/releases/latest).
 
 ### Windows (10 and 11, 64-bit)
 
@@ -140,7 +140,7 @@ kept, and Kern backs it up automatically before upgrading.
   *AppIndicator and KStatusNotifierItem Support* extension is installed. You only
   need the tray if you set Kern to keep running in the background (Settings → General).
 - **Something else?** Please
-  [open an issue](https://github.com/ChristianRelf/KERN/issues) describing what
+  [open an issue](https://github.com/Relf-cc/Kern-App/issues) describing what
   happened. **Settings → About** shows the version you're on.
 
 ## Building from source
