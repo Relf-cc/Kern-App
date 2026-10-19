@@ -7,18 +7,19 @@
 // page (or, offline, from the update's own manifest), shown once on the
 // first start of a new version. It can also be opened from Settings → About.
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, type MouseEvent } from "react";
 import { create } from "zustand";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, ShieldCheck, Sparkles, Wrench, type LucideIcon } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Controls";
 import { api } from "@/lib/ipc";
-import { renderMarkdown, safeHref } from "@/lib/markdown";
+import { renderMarkdown, renderMarkdownInline, safeHref } from "@/lib/markdown";
 import { useSettings } from "@/stores/settings";
 import { APP_NAME } from "@/app/brand";
 import { compareVersions, inAppNotes, isSecurityRelease } from "./notes";
+import { parseNotes, type ParsedNotes, type SectionKind } from "./sections";
 import { PENDING_KEY, type PendingUpdate } from "./store";
 import { RELEASES_PAGE } from "./constants";
 import "./updates.css";
@@ -54,6 +55,58 @@ async function noteVersionRun() {
   if (viaUpdater || newer) openWhatsNew(version, viaUpdater ? (pending?.notes ?? null) : null);
 }
 
+const SECTION_ICON: Record<SectionKind, LucideIcon> = { feature: Sparkles, fix: Wrench, security: ShieldCheck };
+
+/**
+ * Notes written in Kern's own shape, laid out rather than poured through the
+ * Markdown renderer: a titled group per theme, and each bullet as a lead line
+ * with its detail underneath. Every run of text is sanitised inline Markdown.
+ */
+function Notes({ notes }: { notes: ParsedNotes }) {
+  const inline = (source: string) => ({ __html: renderMarkdownInline(source) });
+  return (
+    <div className="whats-new__groups">
+      {notes.intro && <p className="whats-new__intro" dangerouslySetInnerHTML={inline(notes.intro)} />}
+      {notes.sections.map((section, i) => {
+        const Icon = SECTION_ICON[section.kind];
+        return (
+          <section className="wn-group" key={i} data-kind={section.kind}>
+            {section.title && (
+              <h3 className="wn-group__title">
+                <Icon size={13} className="wn-group__icon" aria-hidden />
+                {section.title}
+              </h3>
+            )}
+            <ul className="wn-group__items">
+              {section.items.map((item, j) => (
+                <li className="wn-item" key={j}>
+                  {item.lead ? (
+                    <>
+                      <span className="wn-item__lead" dangerouslySetInnerHTML={inline(item.lead)} />
+                      {item.rest && <span className="wn-item__detail" dangerouslySetInnerHTML={inline(item.rest)} />}
+                    </>
+                  ) : (
+                    <span dangerouslySetInnerHTML={inline(item.rest)} />
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Links in the notes belong in the browser, not in the webview. */
+function openLinks(e: MouseEvent<HTMLElement>) {
+  const a = (e.target as HTMLElement).closest("a");
+  if (!a) return;
+  e.preventDefault();
+  const href = safeHref(a.getAttribute("href"));
+  if (href) void api.system.open(href).catch(() => undefined);
+}
+
 export function WhatsNewHost() {
   const { version, fallback } = useWhatsNew();
   useEffect(() => {
@@ -67,7 +120,10 @@ export function WhatsNewHost() {
     retry: 1,
   });
   const body = notes.data?.body || fallback || "";
-  const html = useMemo(() => (body ? renderMarkdown(inAppNotes(body)) : ""), [body]);
+  const text = useMemo(() => (body ? inAppNotes(body) : ""), [body]);
+  // The house shape is laid out below; anything else falls back to Markdown.
+  const parsed = useMemo(() => (text ? parseNotes(text) : null), [text]);
+  const html = useMemo(() => (text && !parsed ? renderMarkdown(text) : ""), [text, parsed]);
   const url = notes.data?.url ?? (version ? `${RELEASES_PAGE}/tag/v${version}` : RELEASES_PAGE);
   const published = notes.data?.publishedAt ? new Date(notes.data.publishedAt).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) : null;
   const close = () => useWhatsNew.setState({ version: null, fallback: null });
@@ -96,19 +152,10 @@ export function WhatsNewHost() {
           {published && `Released ${published}`}
         </div>
       )}
-      {html ? (
-        <div
-          className="prose whats-new__notes selectable"
-          // Sanitised by renderMarkdown; links open in the browser.
-          dangerouslySetInnerHTML={{ __html: html }}
-          onClick={(e) => {
-            const a = (e.target as HTMLElement).closest("a");
-            if (!a) return;
-            e.preventDefault();
-            const href = safeHref(a.getAttribute("href"));
-            if (href) void api.system.open(href).catch(() => undefined);
-          }}
-        />
+      {text ? (
+        <div className="whats-new__notes selectable" onClick={openLinks}>
+          {parsed ? <Notes notes={parsed} /> : <div className="prose prose--compact" dangerouslySetInnerHTML={{ __html: html }} />}
+        </div>
       ) : notes.isLoading ? (
         <div className="col" style={{ gap: 8 }}>
           <Skeleton width="40%" height={14} />

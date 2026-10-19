@@ -93,9 +93,7 @@ function clean(node: Node, doc: Document): Node | null {
   return out;
 }
 
-/** Renders Markdown to sanitised HTML. */
-export function renderMarkdown(source: string): string {
-  const raw = md.render(source);
+function sanitise(raw: string): string {
   // DOMParser documents are inert: nothing loads or runs while parsing.
   const parsed = new DOMParser().parseFromString(`<body>${raw}</body>`, "text/html");
   const doc = document.implementation.createHTMLDocument("");
@@ -105,4 +103,14 @@ export function renderMarkdown(source: string): string {
     if (c) root.appendChild(c);
   });
   return root.innerHTML;
+}
+
+/** Renders Markdown to sanitised HTML. */
+export function renderMarkdown(source: string): string {
+  return sanitise(md.render(source));
+}
+
+/** The same, for a run of text that belongs inside a line: no paragraph wrapper. */
+export function renderMarkdownInline(source: string): string {
+  return sanitise(md.renderInline(source));
 }

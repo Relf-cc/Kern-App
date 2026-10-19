@@ -74,22 +74,119 @@
   margin-top: 8px;
 }
 
-/* ---------- What's new */
+/* ---------- What's new
+   Notes in the house shape (see "Write a release body" in CLAUDE.md) are laid
+   out as groups of bullets by WhatsNew.tsx; anything else falls back to the
+   Markdown renderer and the .prose rules. */
 .whats-new__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: var(--fs-sm);
   color: var(--text-3);
-  margin-top: -4px;
+  margin-top: -6px;
+}
+.whats-new__meta .security-badge {
+  margin-right: 0;
 }
 .whats-new__notes {
-  max-height: min(60vh, 520px);
+  max-height: min(58vh, 520px);
   overflow-y: auto;
   margin: 0 -4px;
-  padding: 0 4px;
+  padding: 0 4px 2px;
 }
-.whats-new__notes h2 {
+.whats-new__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.whats-new__intro {
+  margin: 0 0 10px;
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.wn-group {
+  padding: 12px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.wn-group:first-child {
+  padding-top: 2px;
+  border-top: none;
+}
+.wn-group__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 9px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--text);
+}
+.wn-group__icon {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+.wn-group[data-kind="security"] .wn-group__icon {
+  color: var(--danger);
+}
+.wn-group__items {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wn-item {
+  position: relative;
+  padding-left: 15px;
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--text);
+}
+.wn-item::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0.68em;
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--text-4);
+}
+.wn-item__lead {
+  display: block;
+  font-weight: 550;
+}
+.wn-item__detail {
+  display: block;
+  margin-top: 1px;
+  color: var(--text-2);
+}
+/* Inline Markdown inside a bullet: the .prose rules don't reach here. */
+.whats-new__groups strong {
+  font-weight: 550;
+  color: var(--text);
+}
+.whats-new__groups code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--hover-strong);
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+}
+.whats-new__groups a {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--text-4);
+  text-underline-offset: 2px;
+}
+.whats-new__notes .prose h2 {
   font-size: var(--fs-md);
 }
-.whats-new__notes h3 {
+.whats-new__notes .prose h3 {
   font-size: var(--fs-sm);
   text-transform: none;
 }

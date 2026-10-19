@@ -205,6 +205,58 @@ then clears the whole domain. Task-shaped changes should call
 `invalidateTasks()`, which fans out across `TASK_DOMAINS` and debounces a tray
 rebuild.
 
+### Write a release body
+
+A release's notes are read twice: on the GitHub release page, and in the
+What's new dialog after updating (`src/features/updates/`). The dialog strips
+what doesn't belong there and lays the rest out itself, so the body has a
+shape:
+
+```markdown
+<!-- kern:security -->
+## What's new
+
+### Flowcharts on whiteboards
+- Six new **flowchart shapes** in the shape menu: terminator, decision, data.
+- **Paste Mermaid…** turns a Mermaid flowchart into real Kern shapes.
+
+### Fixes
+- **Sync no longer flickers between *Syncing* and a failure.** A failed round waits out its backoff instead of being retried on every keystroke.
+
+## Install
+
+Windows: download `Kern_0.2.2_x64-setup.exe`. Existing installs update themselves.
+```
+
+- `## What's new` opens the body and `## Install` (or "Installation",
+  "Downloads") closes it. `inAppNotes` drops both — the heading because the
+  dialog has its own title, the install section because an installed copy has
+  nothing to do there.
+- Between them, one `###` per theme, in sentence case, named for what someone
+  gained ("Flowcharts on whiteboards") rather than the area of code. Fixes come
+  last under `### Fixes`; a heading mentioning security gets a marked icon.
+- Inside a theme, bullets only: `- `, one per line, no nesting, no paragraphs,
+  tables or code blocks. A paragraph inside a theme makes the dialog give up on
+  the layout and render the notes as plain Markdown instead — correct, but
+  plainer. A line of prose *before* the first `###` is kept as an intro.
+- A bullet either reads as a sentence with a bold phrase inside it ("Six new
+  **flowchart shapes** in the shape menu") or as a headline and its detail. It
+  counts as a headline when the bold run closes its own sentence — the full stop
+  goes **inside** the asterisks — or is set off with an em dash
+  (`- **Day planner** — lay your day out beside your calendar.`); the dialog
+  then puts the headline on its own line with the detail beneath it.
+- A security release carries `<!-- kern:security -->` anywhere in the body,
+  which earns the "Security update" badge. It's stripped before display.
+- Present tense, second person, what changed for the person reading. No issue
+  numbers, commit hashes or internal module names.
+
+The body lives at `release/notes-<version>.md` and is published by
+`node scripts/release.mjs --notes release/notes-<version>.md`, which also
+copies it into the updater manifest's `notes` — what What's new shows when
+GitHub can't be reached — and adds the security marker for you under
+`--security`. `src/features/updates/sections.ts` parses the shape, and
+`sections.test.ts` is the record of what it allows.
+
 ## Front-end conventions
 
 **State.** Server data lives in TanStack Query — read it through a hook in
