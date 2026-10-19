@@ -18,6 +18,7 @@ import {
   CopyPlus,
   Flag,
   FolderInput,
+  FolderPlus,
   Inbox,
   Pin,
   PinOff,
@@ -38,7 +39,7 @@ import type { MenuEntry, MenuItems } from "@/components/ui/Menu";
 import { api, describeError } from "@/lib/ipc";
 import { invalidateTasks } from "@/lib/query";
 import type { Label, Project, Task } from "@/lib/types";
-import { deleteTasks, duplicateTask, quickDates, rescheduleTasks, setCompleted, updateTask, updateTasks } from "./actions";
+import { copyTasksToProject, deleteTasks, duplicateTask, quickDates, rescheduleTasks, setCompleted, updateTask, updateTasks } from "./actions";
 import { PRIORITY_LABELS, statusChoices, statusKey } from "./meta";
 import { useUi } from "@/stores/ui";
 import { getSetting } from "@/stores/settings";
@@ -122,6 +123,22 @@ export function taskMenu(
           checked: !multi && task.projectId === p.id,
           onSelect: () => void updateTasks(ids, { projectId: p.id }, `Moved to ${p.name}`),
         })),
+      ],
+    },
+    // Copying stays available inside a project, where moving is hidden: a copy
+    // into a second project is the whole point of being on one project's page.
+    {
+      type: "submenu",
+      label: multi ? `Copy ${ids.length} tasks to project` : "Copy to project",
+      icon: FolderPlus,
+      items: [
+        ...(multi || task.projectId
+          ? [{ label: "Inbox (no project)", icon: Inbox, onSelect: () => void copyTasksToProject(ids, { id: null, name: "the Inbox" }) }]
+          : []),
+        ...(ctx.projects.length ? [{ type: "separator" as const }] : []),
+        ...ctx.projects
+          .filter((p) => multi || p.id !== task.projectId)
+          .map((p) => ({ label: p.name, onSelect: () => void copyTasksToProject(ids, p) })),
       ],
     },
     ctx.labels.length > 0 && {

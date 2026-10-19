@@ -517,12 +517,10 @@
   transition: stroke-dashoffset var(--complete-check) var(--ease-out) calc(var(--complete-check) * 0.35), opacity 0ms,
     stroke 0ms;
 }
-.task-check[data-priority="4"] {
-  border-color: var(--text);
-  border-width: 2px;
-}
+/* Priority reads as weight, never as a different colour: every circle in a
+   list is the same tone, so the column doesn't look mottled. */
+.task-check[data-priority="4"],
 .task-check[data-priority="3"] {
-  border-color: var(--text-2);
   border-width: 2px;
 }
 .task-check[data-blocked="true"] {

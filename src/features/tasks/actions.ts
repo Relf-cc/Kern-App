@@ -248,6 +248,24 @@ export async function duplicateTask(id: string) {
   }
 }
 
+/** Copies tasks into another project, leaving the originals where they are. */
+export async function copyTasksToProject(ids: string[], project: { id: string | null; name: string }) {
+  if (!ids.length) return null;
+  try {
+    const made = await api.tasks.copyToProject(ids, project.id);
+    invalidateTasks();
+    toast(`${made.length === 1 ? "Task copied" : `${made.length} tasks copied`} to ${project.name}`);
+    pushUndo(made.length === 1 ? "Copied" : `${made.length} tasks copied`, async () => {
+      await api.tasks.purge(made.map((t) => t.id));
+      invalidateTasks();
+    });
+    return made;
+  } catch (e) {
+    toastError(describeError(e, "Couldn't copy the tasks."), () => void copyTasksToProject(ids, project));
+    return null;
+  }
+}
+
 export async function rescheduleTasks(ids: string[], dueDate: string | null) {
   await updateTasks(ids, { dueDate }, dueDate ? `Moved to ${formatDue(dueDate)}` : "Date removed");
 }

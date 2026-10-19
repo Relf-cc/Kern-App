@@ -145,6 +145,7 @@ pub fn run() {
             tasks::tasks_update_many,
             tasks::tasks_patch_batch,
             tasks::task_duplicate,
+            tasks::tasks_copy_to_project,
             tasks::tasks_delete,
             tasks::tasks_restore,
             tasks::tasks_purge,

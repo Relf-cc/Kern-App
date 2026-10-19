@@ -52,6 +52,7 @@ const PROPERTY_OPTIONS: { key: keyof TaskMeta; label: string }[] = [
   { key: "labels", label: "Labels" },
   { key: "subtasks", label: "Sub-tasks" },
   { key: "estimate", label: "Estimate" },
+  { key: "creator", label: "Who created it" },
 ];
 
 /** The view settings that aren't filters: kept when filters are cleared. */

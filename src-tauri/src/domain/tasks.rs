@@ -5,7 +5,7 @@
 //! synchronisation and recurrence), bulk operations, duplication and
 //! soft deletion into the trash.
 
-use crate::domain::{activity, passkeys, recurrence::Recurrence};
+use crate::domain::{activity, cloud, passkeys, recurrence::Recurrence};
 use crate::error::{invalid, AppError, AppResult};
 use crate::state::AppState;
 use crate::util::{new_id, now_ms, placeholders, some, valid_date, valid_time};
@@ -72,6 +72,12 @@ pub struct Task {
     pub plan_time: Option<String>,
     #[serde(default)]
     pub comment_count: i64,
+    /// Kern Cloud account that wrote the task, and its name at the time.
+    /// Both are None for anything written offline.
+    #[serde(default)]
+    pub created_by: Option<String>,
+    #[serde(default)]
+    pub created_by_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -106,7 +112,8 @@ pub const TASK_SELECT: &str = "SELECT t.id, t.title, t.description, t.status, t.
   (SELECT count(*) FROM task_relations r JOIN tasks b ON b.id = r.task_id
      WHERE r.related_id = t.id AND r.kind = 'blocks' AND b.status != 'completed' AND b.deleted_at IS NULL),
   t.plan_date, t.plan_time,
-  (SELECT count(*) FROM task_comments c WHERE c.task_id = t.id)
+  (SELECT count(*) FROM task_comments c WHERE c.task_id = t.id),
+  t.created_by, t.created_by_name
 FROM tasks t";
 
 pub fn map_task(r: &Row) -> rusqlite::Result<Task> {
@@ -154,6 +161,8 @@ pub fn map_task(r: &Row) -> rusqlite::Result<Task> {
         plan_date: r.get(33)?,
         plan_time: r.get(34)?,
         comment_count: r.get(35)?,
+        created_by: r.get(36)?,
+        created_by_name: r.get(37)?,
     })
 }
 
@@ -193,6 +202,10 @@ pub struct TaskQuery {
     pub label_ids: Option<Vec<String>>,
     pub due_from: Option<String>,
     pub due_to: Option<String>,
+    /// Treat the due window as a span: a task with a start date earlier than
+    /// its due date matches when any day between the two falls inside it, so
+    /// a run reaching across a whole calendar month is still returned.
+    pub due_overlap: bool,
     pub has_due: Option<bool>,
     /// Open tasks due strictly before this date.
     pub overdue_as_of: Option<String>,
@@ -275,13 +288,29 @@ pub fn query_tasks(conn: &Connection, q: &TaskQuery) -> AppResult<Vec<Task>> {
             args.extend(ls.iter().map(|s| text(s)));
         }
     }
-    if let Some(d) = &q.due_from {
-        sql.push_str(" AND t.due_date >= ?");
-        args.push(text(d));
-    }
-    if let Some(d) = &q.due_to {
-        sql.push_str(" AND t.due_date <= ?");
-        args.push(text(d));
+    match (&q.due_from, &q.due_to, q.due_overlap) {
+        // A run matches when any of its days falls in the window, so one that
+        // starts before it and ends after it is still returned.
+        (Some(from), Some(to), true) => {
+            sql.push_str(
+                " AND ((t.due_date >= ? AND t.due_date <= ?)
+                   OR (t.start_date IS NOT NULL AND t.start_date < t.due_date AND t.start_date <= ? AND t.due_date >= ?))",
+            );
+            args.push(text(from));
+            args.push(text(to));
+            args.push(text(to));
+            args.push(text(from));
+        }
+        _ => {
+            if let Some(d) = &q.due_from {
+                sql.push_str(" AND t.due_date >= ?");
+                args.push(text(d));
+            }
+            if let Some(d) = &q.due_to {
+                sql.push_str(" AND t.due_date <= ?");
+                args.push(text(d));
+            }
+        }
     }
     match q.has_due {
         Some(true) => sql.push_str(" AND t.due_date IS NOT NULL"),
@@ -451,6 +480,19 @@ fn next_board_order(conn: &Connection, column_id: &str) -> AppResult<f64> {
     Ok(max.unwrap_or(0.0) + 1.0)
 }
 
+/// Who is writing: the signed-in Kern Cloud account, or nobody offline. The
+/// name is cached beside the id so a row stays readable after a member
+/// leaves the workspace.
+fn creator(conn: &Connection) -> (Option<String>, Option<String>) {
+    match cloud::current_account(conn) {
+        Some(a) => {
+            let name = if a.name.trim().is_empty() { a.email } else { a.name };
+            (Some(a.id), Some(name))
+        }
+        None => (None, None),
+    }
+}
+
 pub fn create_task(conn: &Connection, input: &TaskInput) -> AppResult<Task> {
     let title = input.title.trim();
     if title.is_empty() {
@@ -520,11 +562,13 @@ pub fn create_task(conn: &Connection, input: &TaskInput) -> AppResult<Task> {
     if let Some(m) = &input.milestone_id {
         check_milestone(conn, m, project_id.as_deref())?;
     }
+    let (created_by, created_by_name) = creator(conn);
     conn.execute(
         "INSERT INTO tasks(id, title, description, status, priority, project_id, column_id, parent_id, due_date,
            due_time, start_date, estimate_minutes, sort_order, board_order, pinned, recurrence, series_id,
-           reminder_minutes, completed_at, created_at, updated_at, milestone_id, plan_date, plan_time)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?20, ?21, ?22, ?23)",
+           reminder_minutes, completed_at, created_at, updated_at, milestone_id, plan_date, plan_time,
+           created_by, created_by_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?20, ?21, ?22, ?23, ?24, ?25)",
         params![
             id,
             title,
@@ -548,7 +592,9 @@ pub fn create_task(conn: &Connection, input: &TaskInput) -> AppResult<Task> {
             now,
             input.milestone_id,
             input.plan_date,
-            input.plan_date.as_ref().and(input.plan_time.clone())
+            input.plan_date.as_ref().and(input.plan_time.clone()),
+            created_by,
+            created_by_name
         ],
     )?;
     if let Some(labels) = &input.label_ids {
@@ -1036,6 +1082,58 @@ pub fn duplicate_task(conn: &Connection, id: &str, parent_override: Option<Optio
     get_task(conn, &copy.id)
 }
 
+/// Copies a task and its checklist into another project. Unlike a duplicate
+/// the title is kept — the copy lives somewhere else — and everything tied to
+/// the source project is dropped: its board column and its milestone. The
+/// copy is open even when the source was done, so it reads as work to do.
+pub fn copy_into_project(conn: &Connection, id: &str, project_id: Option<&str>) -> AppResult<Task> {
+    passkeys::ensure_readable_opt(conn, project_id)?;
+    if let Some(p) = project_id {
+        let exists: Option<String> = conn
+            .query_row("SELECT id FROM projects WHERE id = ?1 AND deleted_at IS NULL", [p], |r| r.get(0))
+            .optional()?;
+        if exists.is_none() {
+            return Err(AppError::NotFound("Project".into()));
+        }
+    }
+    copy_subtree(conn, id, project_id, None)
+}
+
+fn copy_subtree(conn: &Connection, id: &str, project_id: Option<&str>, parent_id: Option<String>) -> AppResult<Task> {
+    let src = get_task(conn, id)?;
+    let sub = parent_id.is_some();
+    let input = TaskInput {
+        title: src.title.clone(),
+        description: Some(src.description.clone()),
+        status: Some(if src.status == "completed" { "todo".into() } else { src.status.clone() }),
+        priority: Some(src.priority),
+        project_id: project_id.map(String::from),
+        // The target project has its own board and milestones.
+        column_id: None,
+        parent_id,
+        due_date: src.due_date.clone(),
+        due_time: src.due_time.clone(),
+        start_date: src.start_date.clone(),
+        estimate_minutes: src.estimate_minutes,
+        pinned: Some(false),
+        recurrence: if sub { None } else { src.recurrence.clone() },
+        label_ids: Some(src.label_ids.clone()),
+        reminder_minutes: src.reminder_minutes,
+        sort_order: None,
+        board_order: None,
+        milestone_id: None,
+        plan_date: None,
+        plan_time: None,
+    };
+    let copy = create_task(conn, &input)?;
+    let mut stmt = conn.prepare("SELECT id FROM tasks WHERE parent_id = ?1 AND deleted_at IS NULL ORDER BY sort_order")?;
+    let children: Vec<String> = stmt.query_map([id], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    for c in children {
+        copy_subtree(conn, &c, project_id, Some(copy.id.clone()))?;
+    }
+    get_task(conn, &copy.id)
+}
+
 // ------------------------------------------------------------- deletion
 
 pub fn soft_delete(conn: &Connection, ids: &[String]) -> AppResult<()> {
@@ -1151,6 +1249,29 @@ pub fn task_duplicate(state: State<AppState>, id: String) -> AppResult<Task> {
     })
 }
 
+/// Copies tasks into another project (`project_id` None is the Inbox). A task
+/// whose parent is in the same request is left out: it already travels with
+/// the parent's checklist.
+#[tauri::command]
+pub fn tasks_copy_to_project(state: State<AppState>, ids: Vec<String>, project_id: Option<String>) -> AppResult<Vec<Task>> {
+    state.with(|c| {
+        let tx = c.transaction()?;
+        let mut carried: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for id in &ids {
+            carried.extend(descendant_ids(&tx, id)?);
+        }
+        let mut out = Vec::new();
+        for id in &ids {
+            if carried.contains(id) {
+                continue;
+            }
+            out.push(copy_into_project(&tx, id, project_id.as_deref())?);
+        }
+        tx.commit()?;
+        Ok(out)
+    })
+}
+
 #[tauri::command]
 pub fn tasks_delete(state: State<AppState>, ids: Vec<String>) -> AppResult<()> {
     state.with(|c| {
@@ -1219,6 +1340,87 @@ mod tests {
         assert!(r.spawned.is_none());
         let r = update_task(&c, &t.id, &TaskPatch { status: Some("todo".into()), ..Default::default() }).unwrap();
         assert!(r.task.completed_at.is_none());
+    }
+
+    #[test]
+    fn a_span_matches_a_window_it_only_passes_over() {
+        let c = open_memory();
+        let mut across = input("Across the month");
+        across.start_date = Some("2026-09-20".into());
+        across.due_date = Some("2026-11-10".into());
+        create_task(&c, &across).unwrap();
+        let mut inside = input("Due inside");
+        inside.due_date = Some("2026-10-14".into());
+        create_task(&c, &inside).unwrap();
+        let mut after = input("Due after");
+        after.due_date = Some("2026-11-20".into());
+        create_task(&c, &after).unwrap();
+
+        let window = TaskQuery {
+            due_from: Some("2026-09-28".into()),
+            due_to: Some("2026-11-08".into()),
+            ..Default::default()
+        };
+        let titles = |q: &TaskQuery| {
+            let mut t: Vec<String> = query_tasks(&c, q).unwrap().into_iter().map(|x| x.title).collect();
+            t.sort();
+            t
+        };
+        // By due date alone the run across the window is missed.
+        assert_eq!(titles(&window), vec!["Due inside".to_string()]);
+        let overlap = TaskQuery { due_overlap: true, ..window };
+        assert_eq!(titles(&overlap), vec!["Across the month".to_string(), "Due inside".to_string()]);
+    }
+
+    #[test]
+    fn copies_a_task_and_its_checklist_into_another_project() {
+        let c = open_memory();
+        let src = crate::domain::projects::create_project(
+            &c,
+            &crate::domain::projects::ProjectInput {
+                name: "Source".into(),
+                description: None,
+                icon: None,
+                accent: None,
+                target_date: None,
+                group_id: None,
+                default_view: None,
+                folder: None,
+            },
+        )
+        .unwrap();
+        let dest = crate::domain::projects::create_project(
+            &c,
+            &crate::domain::projects::ProjectInput {
+                name: "Dest".into(),
+                description: None,
+                icon: None,
+                accent: None,
+                target_date: None,
+                group_id: None,
+                default_view: None,
+                folder: None,
+            },
+        )
+        .unwrap();
+        let mut i = input("Ship the thing");
+        i.project_id = Some(src.id.clone());
+        let parent = create_task(&c, &i).unwrap();
+        let mut sub = input("Write the notes");
+        sub.parent_id = Some(parent.id.clone());
+        sub.project_id = Some(src.id.clone());
+        create_task(&c, &sub).unwrap();
+
+        let copy = copy_into_project(&c, &parent.id, Some(&dest.id)).unwrap();
+        // The title travels as it is: the copy lives somewhere else.
+        assert_eq!(copy.title, "Ship the thing");
+        assert_eq!(copy.project_id.as_deref(), Some(dest.id.as_str()));
+        assert_eq!(copy.subtask_count, 1);
+        assert!(copy.column_id.is_none() && copy.milestone_id.is_none());
+        // The source is untouched.
+        let still = get_task(&c, &parent.id).unwrap();
+        assert_eq!(still.project_id.as_deref(), Some(src.id.as_str()));
+        assert!(copy_into_project(&c, &parent.id, Some("no-such-project")).is_err());
     }
 
     #[test]

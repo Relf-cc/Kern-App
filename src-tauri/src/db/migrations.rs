@@ -6,7 +6,7 @@
 //! interrupted migration rolls back cleanly; additionally a full database
 //! copy is taken before migrating an existing database (see `db::open`).
 
-pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7];
+pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7, MIGRATION_8];
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE settings (
@@ -937,4 +937,12 @@ CREATE TABLE passkeys (
 -- project nor its tasks, notes, whiteboards or search hits until a passkey
 -- has been used for it in this session.
 ALTER TABLE projects ADD COLUMN locked_at INTEGER;
+"#;
+
+const MIGRATION_8: &str = r#"
+-- Who wrote the task. Both columns sync: in a workspace the author's avatar
+-- sits at the end of its row, and the cached name keeps that readable for a
+-- member who has since left. Offline both stay NULL.
+ALTER TABLE tasks ADD COLUMN created_by TEXT;
+ALTER TABLE tasks ADD COLUMN created_by_name TEXT;
 "#;

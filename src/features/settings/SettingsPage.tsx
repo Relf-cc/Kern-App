@@ -225,6 +225,7 @@ function TaskMetaEditor() {
     ["labels", "Labels"],
     ["subtasks", "Subtask progress"],
     ["estimate", "Estimate"],
+    ["creator", "Who created it"],
   ];
   return (
     <div className="row" style={{ flexWrap: "wrap", gap: 14 }}>
@@ -502,6 +503,12 @@ function useSections(apiTab?: ApiTab): Record<SettingsSection, GroupDef[] | Reac
             hint: "Underlines misspelled words in notes, with corrections on right-click. It uses your computer's own dictionaries, so nothing is sent anywhere.",
             keywords: "spell checker spelling autocorrect proofread dictionary suggestions typo",
             control: <SToggle k="editor.spellcheck" />,
+          },
+          {
+            label: "Note width",
+            hint: "Readable keeps text in a measured column; wide lets it fill the pane, for tables and wide code.",
+            keywords: "notes editor expanded full width measure line length column",
+            control: <SSegmented k="editor.noteWidth" options={[{ value: "readable", label: "Readable" }, { value: "wide", label: "Wide" }]} />,
           },
         ],
       },

@@ -3,11 +3,11 @@
  * @Date 2026-10-12
  */
 
-import { Archive, CalendarDays, CircleCheck, Flag, FolderInput, Tag, Trash, X } from "lucide-react";
+import { Archive, CalendarDays, CircleCheck, Flag, FolderInput, FolderPlus, Tag, Trash, X } from "lucide-react";
 import { IconButton } from "@/components/ui/Button";
 import { Dropdown } from "@/components/ui/Menu";
 import { useLabels, useProjects } from "@/hooks/data";
-import { deleteTasks, rescheduleTasks, updateTasks } from "./actions";
+import { copyTasksToProject, deleteTasks, rescheduleTasks, updateTasks } from "./actions";
 import { DuePopover } from "./pickers";
 import { PRIORITY_LABELS } from "./meta";
 
@@ -55,6 +55,16 @@ export function BulkBar({ ids, onClear }: { ids: string[]; onClear: () => void }
         ]}
       >
         <IconButton icon={FolderInput} label="Move to project" tooltipSide="top" noTooltip />
+      </Dropdown>
+      <Dropdown
+        side="top"
+        items={[
+          { label: "Inbox (no project)", onSelect: () => void copyTasksToProject(ids, { id: null, name: "the Inbox" }) },
+          ...((projects ?? []).length ? [{ type: "separator" as const }] : []),
+          ...(projects ?? []).map((p) => ({ label: p.name, onSelect: () => void copyTasksToProject(ids, p) })),
+        ]}
+      >
+        <IconButton icon={FolderPlus} label="Copy to project" tooltipSide="top" noTooltip />
       </Dropdown>
       <Dropdown
         side="top"

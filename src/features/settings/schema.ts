@@ -65,6 +65,8 @@ export interface Settings {
   // Writing
   /** Underline misspelled words in notes, with corrections on right-click. */
   "editor.spellcheck": boolean;
+  /** How wide a note's text runs: a measured column, or the whole pane. */
+  "editor.noteWidth": "readable" | "wide";
   // Appearance
   "appearance.theme": Theme;
   "appearance.accent": Accent;
@@ -77,7 +79,7 @@ export interface Settings {
   "appearance.sidebarCollapsed": boolean;
   "appearance.navItems": NavItemId[];
   "appearance.taskRowStyle": "compact" | "expanded";
-  "appearance.taskMeta": { project: boolean; due: boolean; priority: boolean; labels: boolean; subtasks: boolean; estimate: boolean };
+  "appearance.taskMeta": { project: boolean; due: boolean; priority: boolean; labels: boolean; subtasks: boolean; estimate: boolean; creator: boolean };
   "appearance.scrollbars": "thin" | "hover" | "wide";
   "appearance.inspectorWidth": number;
   // Sidebar
@@ -277,6 +279,7 @@ export const DEFAULTS: Settings = {
   "interaction.rememberTaskProps": true,
 
   "editor.spellcheck": true,
+  "editor.noteWidth": "readable",
 
   "appearance.theme": "dark",
   "appearance.accent": "none",
@@ -289,7 +292,7 @@ export const DEFAULTS: Settings = {
   "appearance.sidebarCollapsed": false,
   "appearance.navItems": ["dashboard", "tasks", "inbox", "projects", "whiteboards", "notes"],
   "appearance.taskRowStyle": "compact",
-  "appearance.taskMeta": { project: true, due: true, priority: true, labels: true, subtasks: true, estimate: false },
+  "appearance.taskMeta": { project: true, due: true, priority: true, labels: true, subtasks: true, estimate: false, creator: true },
   "appearance.scrollbars": "thin",
   "appearance.inspectorWidth": 380,
 

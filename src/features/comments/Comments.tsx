@@ -19,21 +19,11 @@ import { IconButton, Button } from "@/components/ui/Button";
 import { confirmDelete } from "@/components/ui/Dialog";
 import { Avatar } from "@/features/cloud/ui";
 import { useActiveSpace, useCloud, useReadOnly } from "@/features/cloud/store";
+import { useMembers } from "@/features/cloud/members";
 import { extractUrls } from "@/features/links/links";
 import "./comments.css";
 
 const MENTION = /@\[([^\]]{1,80})\]\(([A-Za-z0-9_-]{1,64})\)/g;
-
-function useMembers(): Member[] {
-  const space = useActiveSpace();
-  const { data } = useQuery({
-    queryKey: ["cloud", "members", space?.id],
-    queryFn: () => api.cloud.request<Member[]>("GET", `/workspaces/${space!.id}/members`),
-    enabled: space?.kind === "workspace",
-    staleTime: 5 * 60_000,
-  });
-  return data ?? [];
-}
 
 /** Text with mention chips and clickable links. */
 function Body({ text }: { text: string }) {

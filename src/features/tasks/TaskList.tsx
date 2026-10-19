@@ -25,6 +25,8 @@ import type { Task, TaskInput, TaskMeta } from "@/lib/types";
 import { useLabelMap, useLabels, useProjectMap, useProjects } from "@/hooks/data";
 import { useSetting } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
+import { useActiveSpace } from "@/features/cloud/store";
+import { useMemberMap } from "@/features/cloud/members";
 import { useToday } from "@/hooks/useToday";
 import { TaskRow, type RowContext } from "./TaskRow";
 import { taskMenu, openTask } from "./menu";
@@ -65,6 +67,11 @@ export function useRowContext(opts: { hideProject?: boolean; meta?: Partial<Task
   const expanded = useSetting("appearance.taskRowStyle") === "expanded";
   const today = useToday();
   const selection = useUi((s) => s.selectedTaskIds);
+  // Who wrote a task only means something where more than one person can:
+  // in a personal or offline space every row would carry the same face.
+  const space = useActiveSpace();
+  const people = useMemberMap();
+  const showCreator = meta.creator && space?.kind === "workspace";
   return useMemo(
     () => ({
       projects: projects ?? [],
@@ -76,8 +83,10 @@ export function useRowContext(opts: { hideProject?: boolean; meta?: Partial<Task
       hideProject: opts.hideProject,
       today,
       selection,
+      people,
+      showCreator,
     }),
-    [projects, projectMap, labelMap, labels, meta, expanded, opts.hideProject, today, selection],
+    [projects, projectMap, labelMap, labels, meta, expanded, opts.hideProject, today, selection, people, showCreator],
   );
 }
 

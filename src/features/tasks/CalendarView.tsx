@@ -24,6 +24,7 @@ import { useSetting } from "@/stores/settings";
 import { useTasks } from "@/hooks/data";
 import { useToday } from "@/hooks/useToday";
 import { addMonthsStr, formatDue, formatTime, monthGrid, monthStartStr, parseDateStr, weekdayLabels, addDaysStr } from "@/lib/dates";
+import { layOutDays, movedTo, type Segment } from "./spans";
 import { IconButton, Button } from "@/components/ui/Button";
 import { Popover, TaskCheck, TaskTitle, Switch } from "@/components/ui/Controls";
 import { openTask } from "./menu";
@@ -39,9 +40,14 @@ function sortDay(a: Task, b: Task) {
   );
 }
 
-function CalTask({ task, overlay, still }: { task: Task; overlay?: boolean; still?: boolean }) {
+function CalTask({ seg, task, overlay, still }: { seg?: Segment; task: Task; overlay?: boolean; still?: boolean }) {
   const inert = overlay || still;
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: inert ? `inert:${task.id}` : task.id, data: { task }, disabled: inert });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: inert ? `inert:${task.id}` : seg ? `${task.id}@${seg.day}` : task.id,
+    data: { task, day: seg?.day },
+    disabled: inert,
+  });
+  const bare = !!seg && !seg.labelled;
   return (
     <div
       ref={inert ? undefined : setNodeRef}
@@ -49,16 +55,23 @@ function CalTask({ task, overlay, still }: { task: Task; overlay?: boolean; stil
       {...(inert ? {} : listeners)}
       className="cal-task"
       data-done={task.status === "completed"}
+      data-open-left={seg?.openLeft || undefined}
+      data-open-right={seg?.openRight || undefined}
       style={{ opacity: isDragging && !overlay ? 0.35 : 1, boxShadow: overlay ? "var(--shadow-md)" : undefined }}
       onClick={(e) => {
         e.stopPropagation();
         openTask(task.id);
       }}
       title={task.title}
+      aria-label={bare ? task.title : undefined}
     >
-      <TaskCheck checked={task.status === "completed"} onToggle={() => void toggleComplete(task)} priority={task.priority} cancelled={!!task.resolution} />
-      {task.dueTime && <span className="faint tabular">{formatTime(task.dueTime)}</span>}
-      <TaskTitle title={task.title} done={task.status === "completed"} />
+      {!bare && (
+        <>
+          <TaskCheck checked={task.status === "completed"} onToggle={() => void toggleComplete(task)} priority={task.priority} cancelled={!!task.resolution} />
+          {task.dueTime && <span className="faint tabular">{formatTime(task.dueTime)}</span>}
+          <TaskTitle title={task.title} done={task.status === "completed"} />
+        </>
+      )}
     </div>
   );
 }
@@ -72,12 +85,24 @@ function CalEventChip({ e }: { e: CalEvent }) {
   );
 }
 
-function DayCell({ day, tasks, events, month, today, maxVisible }: { day: string; tasks: Task[]; events: CalEvent[]; month: number; today: string; maxVisible: number }) {
+function DayCell({
+  day,
+  bars,
+  tasks,
+  events,
+  month,
+  today,
+  maxVisible,
+}: { day: string; bars: Segment[]; tasks: Task[]; events: CalEvent[]; month: number; today: string; maxVisible: number }) {
   const { setNodeRef, isOver } = useDroppable({ id: `day:${day}` });
   const d = parseDateStr(day);
-  const shownEvents = events.slice(0, Math.max(1, Math.min(2, maxVisible - tasks.length)));
-  const visible = tasks.slice(0, Math.max(1, maxVisible - shownEvents.length));
-  const more = tasks.length - visible.length + (events.length - shownEvents.length);
+  // Bars go at the top of every cell they cross, so a run of days lines up
+  // into one continuous band instead of stepping around the other rows.
+  const shownEvents = events.slice(0, Math.max(1, Math.min(2, maxVisible - bars.length - tasks.length)));
+  const budget = Math.max(1, maxVisible - shownEvents.length);
+  const shownBars = bars.slice(0, budget);
+  const visible = tasks.slice(0, Math.max(0, budget - shownBars.length));
+  const more = bars.length - shownBars.length + (tasks.length - visible.length) + (events.length - shownEvents.length);
   return (
     <div
       ref={setNodeRef}
@@ -91,6 +116,9 @@ function DayCell({ day, tasks, events, month, today, maxVisible }: { day: string
         <b>{d.getDate() === 1 ? format(d, "d MMM") : d.getDate()}</b>
       </div>
       <div className="cal__tasks">
+        {shownBars.map((seg) => (
+          <CalTask key={seg.task.id} seg={seg} task={seg.task} />
+        ))}
         {shownEvents.map((e) => (
           <CalEventChip key={`${e.feedId}:${e.uid}:${e.start}`} e={e} />
         ))}
@@ -105,6 +133,9 @@ function DayCell({ day, tasks, events, month, today, maxVisible }: { day: string
               </div>
               {events.map((e) => (
                 <CalEventChip key={`${e.feedId}:${e.uid}:${e.start}`} e={e} />
+              ))}
+              {bars.map((seg) => (
+                <CalTask key={seg.task.id} task={seg.task} still />
               ))}
               {tasks.map((t) => (
                 <CalTask key={t.id} task={t} still />
@@ -154,6 +185,8 @@ export default function CalendarView() {
   const { data: tasks } = useTasks({
     dueFrom: days[0],
     dueTo: days[days.length - 1],
+    // A run across the whole month belongs on it even if neither end is.
+    dueOverlap: true,
     topLevelOnly: true,
     includeCompleted: showDone,
     order: "due",
@@ -180,27 +213,31 @@ export default function CalendarView() {
     }
     return m;
   }, [events]);
-  const byDay = useMemo(() => {
-    const m = new Map<string, Task[]>();
-    for (const t of tasks ?? []) {
-      if (!t.dueDate) continue;
-      if (!m.has(t.dueDate)) m.set(t.dueDate, []);
-      m.get(t.dueDate)!.push(t);
-    }
-    for (const list of m.values()) list.sort(sortDay);
-    return m;
-  }, [tasks]);
+  // A task with a start date earlier than its due date is a run of days, not
+  // a point: it's drawn as one bar across every cell between the two. The
+  // query asks by due date, so a run reaching in from an earlier month is
+  // clipped to the first cell of the grid.
+  // A task with a start date earlier than its due date is a run of days, not
+  // a point: it's drawn as one bar across every cell between the two.
+  const { bars, byDay } = useMemo(() => layOutDays(tasks ?? [], days, sortDay), [tasks, days]);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const onDragStart = (e: DragStartEvent) => setDragging((e.active.data.current as { task: Task }).task);
   const onDragEnd = (e: DragEndEvent) => {
     setDragging(null);
-    const task = (e.active.data.current as { task: Task } | undefined)?.task;
+    const from = e.active.data.current as { task: Task; day?: string } | undefined;
+    const task = from?.task;
     const target = e.over?.id ? String(e.over.id).slice(4) : null;
     if (!task || target === null) return;
     const date = target === "none" ? null : target;
-    if (date === task.dueDate) return;
-    void updateTask(task.id, { dueDate: date, ...(date ? {} : { dueTime: null }) }, { undoLabel: date ? `Moved to ${formatDue(date)}` : "Date removed" });
+    if (date === null) {
+      void updateTask(task.id, { dueDate: null, dueTime: null }, { undoLabel: "Date removed" });
+      return;
+    }
+    // Dragging a run moves the whole thing, so its length survives the move.
+    const next = movedTo(task, from?.day, date);
+    if (!next) return;
+    void updateTask(task.id, next, { undoLabel: `Moved to ${formatDue(next.startDate ?? next.dueDate)}` });
   };
   const monthIdx = parseDateStr(month).getMonth();
 
@@ -236,7 +273,16 @@ export default function CalendarView() {
           </div>
           <div className="cal__grid">
             {days.map((d) => (
-              <DayCell key={d} day={d} tasks={byDay.get(d) ?? []} events={eventsByDay.get(d) ?? []} month={monthIdx} today={today} maxVisible={4} />
+              <DayCell
+                key={d}
+                day={d}
+                bars={bars.get(d) ?? []}
+                tasks={byDay.get(d) ?? []}
+                events={eventsByDay.get(d) ?? []}
+                month={monthIdx}
+                today={today}
+                maxVisible={4}
+              />
             ))}
           </div>
         </div>

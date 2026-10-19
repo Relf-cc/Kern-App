@@ -572,6 +572,11 @@
   max-width: 760px;
   margin: 0 auto;
 }
+/* "Wide" lets a note fill the pane, for tables, wide code and pasted output
+   that a measured column would wrap to pieces. */
+.note-doc[data-width="wide"] {
+  max-width: none;
+}
 .note-title {
   width: 100%;
   border: none;

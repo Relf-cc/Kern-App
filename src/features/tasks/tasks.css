@@ -125,6 +125,14 @@
   width: 13px;
   height: 13px;
 }
+/* Who wrote it, last in the row and never pushed around by the meta beside
+   it, so the faces line up down the right edge of the list. */
+.task-row__who {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
 .task-row__hover {
   position: absolute;
   right: 6px;
@@ -144,8 +152,10 @@
 .task-row__hover:has([data-state="open"]) {
   display: flex;
 }
-.task-row:hover .task-row__meta,
-.task-row:has(.task-row__hover [data-state="open"]) .task-row__meta {
+/* The hover actions sit over the right of the row, so what's under them
+   steps aside. */
+.task-row:hover :is(.task-row__meta, .task-row__who),
+.task-row:has(.task-row__hover [data-state="open"]) :is(.task-row__meta, .task-row__who) {
   visibility: hidden;
 }
 
@@ -171,18 +181,23 @@
   height: 13px;
 }
 
+/* The grip is drawn in the gutter but the target reaches the full height of
+   the row and up to the checkbox, so it can be grabbed without aiming. */
 .drag-handle {
   position: absolute;
   left: -14px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 14px;
-  height: 20px;
+  top: 0;
+  bottom: 0;
+  width: 22px;
   display: none;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   color: var(--text-4);
   cursor: grab;
+  touch-action: none;
+}
+.drag-handle:hover {
+  color: var(--text-2);
 }
 .task-row:hover .drag-handle {
   display: flex;
@@ -523,6 +538,21 @@
 }
 .cal-task:hover {
   background: var(--hover-strong);
+}
+/* A task that runs from its start date to its due date is one bar across the
+   days between: the pieces either side of a cell boundary drop their corners
+   and reach into the gutter, so the run reads as continuous. */
+.cal-task[data-open-left="true"] {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -4px;
+  padding-left: 0;
+}
+.cal-task[data-open-right="true"] {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  margin-right: -4px;
+  padding-right: 0;
 }
 .cal-task[data-done="true"] {
   color: var(--text-3);

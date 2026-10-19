@@ -67,6 +67,7 @@ export const api = {
     updateMany: (ids: string[], patch: T.TaskPatch) => call<T.TaskUpdateResult[]>("tasks_update_many", { ids, patch }),
     patchBatch: (items: [string, T.TaskPatch][]) => call<void>("tasks_patch_batch", { items }),
     duplicate: (id: string) => call<T.Task>("task_duplicate", { id }),
+    copyToProject: (ids: string[], projectId: string | null) => call<T.Task[]>("tasks_copy_to_project", { ids, projectId }),
     delete: (ids: string[]) => call<void>("tasks_delete", { ids }),
     restore: (ids: string[]) => call<void>("tasks_restore", { ids }),
     purge: (ids: string[]) => call<void>("tasks_purge", { ids }),

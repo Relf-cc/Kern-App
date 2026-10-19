@@ -60,6 +60,10 @@ export interface Task {
   planDate?: string | null;
   planTime?: string | null;
   commentCount?: number;
+  /** Kern Cloud account that wrote the task, and its name at the time. Both
+   *  are null for anything written offline. */
+  createdBy?: string | null;
+  createdByName?: string | null;
 }
 
 /** A relation from one task's point of view. */
@@ -94,6 +98,8 @@ export interface TaskQuery {
   labelIds?: string[];
   dueFrom?: string;
   dueTo?: string;
+  /** Match a task whose start-to-due run touches [dueFrom, dueTo] at all. */
+  dueOverlap?: boolean;
   hasDue?: boolean;
   overdueAsOf?: string;
   includeCompleted?: boolean;
@@ -602,6 +608,8 @@ export interface TaskMeta {
   labels: boolean;
   subtasks: boolean;
   estimate: boolean;
+  /** The author's picture at the end of the row (workspaces only). */
+  creator: boolean;
 }
 
 export interface RecentItem {

@@ -5,7 +5,7 @@
 
 import { memo, type CSSProperties } from "react";
 import { Ban, CalendarDays, ClockAlert, Ellipsis, GripVertical, ListChecks, Paperclip, Pin, Repeat, Timer } from "lucide-react";
-import type { Label, Project, Task } from "@/lib/types";
+import type { Label, Member, Project, Task } from "@/lib/types";
 import { TaskCheck, TaskTitle } from "@/components/ui/Controls";
 import { IconButton } from "@/components/ui/Button";
 import { Dropdown } from "@/components/ui/Menu";
@@ -13,6 +13,7 @@ import { dueState, formatDue, formatDuration } from "@/lib/dates";
 import { PriorityIcon } from "./meta";
 import { GithubMark } from "@/features/github/shared";
 import { ProjectGlyph } from "@/features/projects/ProjectGlyph";
+import { Avatar } from "@/features/cloud/ui";
 import { DuePopover } from "./pickers";
 import { taskMenu } from "./menu";
 import { LabelChip } from "./labels";
@@ -29,6 +30,22 @@ export interface RowContext {
   hideProject?: boolean;
   today: string;
   selection: string[];
+  /** Workspace members by user id, for the creator's picture and name. */
+  people: Map<string, Member>;
+  /** Whether rows show who wrote them (a workspace with the setting on). */
+  showCreator: boolean;
+}
+
+/** The author's picture, at the end of the row. */
+function Creator({ task, people }: { task: Task; people: Map<string, Member> }) {
+  if (!task.createdBy) return null;
+  const member = people.get(task.createdBy);
+  const name = member?.name || task.createdByName || "Someone else";
+  return (
+    <span className="task-row__who">
+      <Avatar name={name} image={member?.image} size={18} title={`Created by ${name}`} />
+    </span>
+  );
 }
 
 export function DueLabel({ date, time, done, today }: { date: string | null; time?: string | null; done: boolean; today: string }) {
@@ -85,7 +102,7 @@ function TaskRowInner({
     >
       {dragHandle && (
         <span className="drag-handle" {...dragHandle} aria-label="Drag to reorder">
-          <GripVertical size={12} />
+          <GripVertical size={14} />
         </span>
       )}
       <TaskCheck checked={done} onToggle={() => void toggleComplete(t)} priority={t.priority} blocked={t.status === "blocked" || !!t.blockedBy} cancelled={!!t.resolution} />
@@ -146,6 +163,7 @@ function TaskRowInner({
         </div>
         {firstLine && <div className="task-row__desc">{firstLine}</div>}
       </div>
+      {ctx.showCreator && <Creator task={t} people={ctx.people} />}
       <div className="task-row__hover" onClick={(e) => e.stopPropagation()}>
         <DuePopover
           date={t.dueDate}

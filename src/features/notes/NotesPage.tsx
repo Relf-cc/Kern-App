@@ -20,6 +20,8 @@ import {
   Globe,
   LayoutTemplate,
   ChevronDown,
+  Fullscreen,
+  AlignCenter,
 } from "lucide-react";
 import { openAssist } from "@/features/assist/open";
 import { openShare } from "@/features/share/open";
@@ -37,6 +39,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, describeError } from "@/lib/ipc";
 import { invalidate, queryClient } from "@/lib/query";
 import { navigate, onBeforeNavigate } from "@/stores/router";
+import { setSetting, useSetting } from "@/stores/settings";
 import { pushUndo } from "@/stores/undo";
 import { toast, toastError } from "@/stores/toast";
 import { relativeTime } from "@/lib/dates";
@@ -250,6 +253,7 @@ export default function NotesPage({ noteId, projectId, embedded }: { noteId?: st
 
 function NoteView({ id, onDeleted }: { id: string; onDeleted: () => void }) {
   const { data: note, isError } = useQuery({ queryKey: ["note", id], queryFn: () => api.notes.get(id), staleTime: Infinity });
+  const width = useSetting("editor.noteWidth");
   const { data: projects } = useProjects();
   const projectMap = useProjectMap();
   const [title, setTitle] = useState<string | null>(null);
@@ -311,13 +315,18 @@ function NoteView({ id, onDeleted }: { id: string; onDeleted: () => void }) {
         </span>
         <span className="spacer" />
         <InsertMenu editor={editor} />
+        <IconButton
+          icon={width === "wide" ? AlignCenter : Fullscreen}
+          label={width === "wide" ? "Readable width" : "Expand to the full width"}
+          onClick={() => void setSetting("editor.noteWidth", width === "wide" ? "readable" : "wide")}
+        />
         <IconButton icon={note.pinned ? PinOff : Pin} label={note.pinned ? "Unpin" : "Pin"} active={note.pinned} onClick={() => void patchNote(id, { pinned: !note.pinned }).then(() => invalidate("note"))} />
         <Dropdown items={() => noteMenu(meta, projects ?? [], onDeleted)} align="end">
           <IconButton icon={Ellipsis} label="Note actions" noTooltip />
         </Dropdown>
       </div>
       <div className="note-scroll" onClick={(e) => e.target === e.currentTarget && editor?.chain().focus("end").run()}>
-        <div className="note-doc">
+        <div className="note-doc" data-width={width}>
           <input
             className="note-title"
             placeholder="Untitled"
