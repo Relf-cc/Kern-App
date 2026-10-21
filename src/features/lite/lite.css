@@ -511,11 +511,17 @@
   stroke-linejoin: round;
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
-  transition: stroke-dashoffset 220ms var(--ease) 60ms;
+  opacity: 1;
+  transition: stroke-dashoffset 220ms var(--ease) 60ms, opacity 160ms var(--ease), stroke 200ms var(--ease);
 }
+/* Hovering draws the whole tick, faintly: a preview of what clicking does.
+   A part-drawn stroke just looks like an animation that gave up. */
 .lite-check:hover .lite-check__tick {
   stroke: var(--lite-tint);
-  stroke-dashoffset: 0.55;
+  stroke-dashoffset: 0;
+  opacity: 0.45;
+  transition-duration: 180ms;
+  transition-delay: 0ms;
 }
 .lite-task[data-done] .lite-check__ring {
   fill: var(--lite-tint);
@@ -524,6 +530,7 @@
 .lite-task[data-done] .lite-check__tick {
   stroke: var(--lite-tint-fg);
   stroke-dashoffset: 0;
+  opacity: 1;
 }
 .lite-list:not(.lite-list--done) .lite-task[data-done] .lite-check svg {
   animation: lite-pop 380ms var(--spring);

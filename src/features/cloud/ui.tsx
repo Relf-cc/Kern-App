@@ -25,7 +25,7 @@ export function initials(name: string) {
   return (parts.length === 1 ? parts[0].slice(0, 2) : parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-export function Avatar({ name, image, color, size = 22, ring, title }: { name: string; image?: string | null; color?: string; size?: number; ring?: string; title?: string }) {
+export function Avatar({ name, image, color, size = 22, ring, title }: { name: string; image?: string | null; color?: string; size?: number; ring?: string; title?: string | null }) {
   const style: CSSProperties = {
     width: size,
     height: size,
@@ -34,7 +34,7 @@ export function Avatar({ name, image, color, size = 22, ring, title }: { name: s
     boxShadow: ring ? `0 0 0 2px var(--surface-2), 0 0 0 3.5px ${ring}` : undefined,
   };
   return (
-    <span className="avatar" style={style} title={title ?? name} aria-label={title ?? name}>
+    <span className="avatar" style={style} title={title === null ? undefined : title ?? name} aria-label={title || name}>
       {image ? <img src={image} alt="" /> : initials(name)}
     </span>
   );

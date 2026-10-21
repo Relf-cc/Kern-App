@@ -126,12 +126,16 @@
   height: 13px;
 }
 /* Who wrote it, last in the row and never pushed around by the meta beside
-   it, so the faces line up down the right edge of the list. */
+   it, so the faces line up down the right edge of the list. It stays on show
+   while the row is hovered — above the hover actions' backdrop — because
+   hovering the face is how you find out whose it is. */
 .task-row__who {
   display: flex;
   align-items: center;
   flex-shrink: 0;
   margin-top: 1px;
+  position: relative;
+  z-index: 1;
 }
 .task-row__hover {
   position: absolute;
@@ -153,10 +157,13 @@
   display: flex;
 }
 /* The hover actions sit over the right of the row, so what's under them
-   steps aside. */
-.task-row:hover :is(.task-row__meta, .task-row__who),
-.task-row:has(.task-row__hover [data-state="open"]) :is(.task-row__meta, .task-row__who) {
+   steps aside — the meta, but not the face: the actions stop short of it. */
+.task-row:hover .task-row__meta,
+.task-row:has(.task-row__hover [data-state="open"]) .task-row__meta {
   visibility: hidden;
+}
+.task-row:has(.task-row__who) .task-row__hover {
+  padding-right: 24px;
 }
 
 .due {
@@ -467,16 +474,31 @@
   font-weight: 600;
 }
 .cal__grid {
+  /* The lane height the band and the cells both measure against: a bar plus
+     the gap under it. */
+  --cal-lane: 24px;
+  --cal-pad: 4px;
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
   grid-template-rows: repeat(6, minmax(0, 1fr));
   min-height: 0;
+}
+/* A week is its own row of seven cells with a band of bars floating over
+   them, so a run of days is one element rather than seven. */
+.cal__week {
+  --lanes: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  min-height: 0;
+  /* A deep band in a short window is clipped at the row rather than spilling
+     over the week below it. */
+  overflow: hidden;
 }
 .cal__cell {
   border-right: 1px solid var(--border-subtle);
   border-bottom: 1px solid var(--border-subtle);
-  padding: 4px;
+  padding: var(--cal-pad);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -486,6 +508,9 @@
 }
 .cal__cell:nth-child(7n) {
   border-right: none;
+}
+.cal__cell[data-weekend="true"] {
+  background: color-mix(in srgb, var(--bg-sunken) 45%, transparent);
 }
 .cal__cell[data-outside="true"] {
   background: var(--bg-sunken);
@@ -522,6 +547,73 @@
   gap: 2px;
   overflow: hidden;
   min-height: 0;
+  /* Clear of the band above, so the day's own chips start below the runs
+     crossing it however many there are. */
+  margin-top: calc(var(--lanes) * var(--cal-lane));
+}
+/* ---------- The band of running tasks
+   Laid on the same seven columns as the cells and in the same lanes all the
+   way across the row, so a bar holds its line as it crosses the week. The
+   cells stay droppable: only the bars themselves take the pointer. */
+.cal__band {
+  position: absolute;
+  /* Below the date line: the cell's padding, the date, and the gap after it. */
+  top: calc(var(--cal-pad) + 22px + 2px);
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: 22px;
+  row-gap: 2px;
+  pointer-events: none;
+}
+.cal__band > * {
+  pointer-events: auto;
+}
+.cal-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 7px;
+  /* Inset by the cell padding, so a bar's closed ends line up with the chips
+     below it; an open end instead runs to the edge of the cell. */
+  margin: 0 var(--cal-pad);
+  border-radius: var(--r-xs);
+  font-size: var(--fs-xs);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+  color: var(--text);
+  cursor: grab;
+  transition: background var(--t-hover) var(--ease);
+}
+.cal-bar:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.cal-bar[data-open-left="true"] {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: 0;
+}
+.cal-bar[data-open-right="true"] {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  margin-right: 0;
+}
+.cal-bar[data-done="true"] {
+  color: var(--text-3);
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+.cal-bar .task-check {
+  --size: 12px;
+}
+.cal-bar .task-check svg {
+  width: 8px;
+  height: 8px;
+}
+.cal-bar .strike {
+  flex: 1;
 }
 .cal-task {
   display: flex;
@@ -538,21 +630,6 @@
 }
 .cal-task:hover {
   background: var(--hover-strong);
-}
-/* A task that runs from its start date to its due date is one bar across the
-   days between: the pieces either side of a cell boundary drop their corners
-   and reach into the gutter, so the run reads as continuous. */
-.cal-task[data-open-left="true"] {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  margin-left: -4px;
-  padding-left: 0;
-}
-.cal-task[data-open-right="true"] {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-  margin-right: -4px;
-  padding-right: 0;
 }
 .cal-task[data-done="true"] {
   color: var(--text-3);
@@ -575,6 +652,19 @@
 }
 .cal__more:hover {
   color: var(--text);
+}
+.cal-tray {
+  width: 240px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-sunken);
+  transition: background var(--t-hover) var(--ease);
+}
+.cal-tray[data-over="true"] {
+  background: var(--accent-soft);
 }
 
 .draft-banner {

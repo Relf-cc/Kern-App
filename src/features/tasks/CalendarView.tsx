@@ -4,7 +4,7 @@
  */
 
 import { ChevronLeft, ChevronRight, PanelRightClose, PanelRightOpen } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -13,6 +13,9 @@ import {
   useDroppable,
   useSensor,
   useSensors,
+  pointerWithin,
+  rectIntersection,
+  type CollisionDetection,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
@@ -23,13 +26,37 @@ import { api } from "@/lib/ipc";
 import { useSetting } from "@/stores/settings";
 import { useTasks } from "@/hooks/data";
 import { useToday } from "@/hooks/useToday";
-import { addMonthsStr, formatDue, formatTime, monthGrid, monthStartStr, parseDateStr, weekdayLabels, addDaysStr } from "@/lib/dates";
-import { layOutDays, movedTo, type Segment } from "./spans";
+import { addMonthsStr, formatDue, formatTime, monthGrid, monthStartStr, parseDateStr, weekdayLabels, addDaysStr, isoWeekday } from "@/lib/dates";
+import { layOutMonth, movedTo, type Bar } from "./spans";
 import { IconButton, Button } from "@/components/ui/Button";
 import { Popover, TaskCheck, TaskTitle, Switch } from "@/components/ui/Controls";
 import { openTask } from "./menu";
 import { toggleComplete, updateTask } from "./actions";
 import { useUi } from "@/stores/ui";
+
+/** How many lines of chips a cell has room for under the band of bars. */
+const CELL_LINES = 4;
+/** Lanes of bars a week row will give up to runs before they spill. */
+const MAX_LANES = 3;
+
+/**
+ * The day under the pointer, not the cell the dragged thing happens to cover
+ * most: a bar is as wide as the run it draws, so by area it would land on the
+ * middle of itself.
+ */
+const collision: CollisionDetection = (args) => {
+  const hit = pointerWithin(args);
+  return hit.length ? hit : rectIntersection(args);
+};
+
+/** What a drag carries: the task, and where on the grid it was picked up. */
+interface DragData {
+  task: Task;
+  /** The day a chip sits on, or undefined for one with no date. */
+  day?: string;
+  /** Set when a bar is being dragged, to work out which day was grabbed. */
+  bar?: Bar;
+}
 
 function sortDay(a: Task, b: Task) {
   return (
@@ -40,14 +67,14 @@ function sortDay(a: Task, b: Task) {
   );
 }
 
-function CalTask({ seg, task, overlay, still }: { seg?: Segment; task: Task; overlay?: boolean; still?: boolean }) {
+/** A task on a single day: its own cell, the unscheduled tray or a popover. */
+function CalChip({ task, day, overlay, still }: { task: Task; day?: string; overlay?: boolean; still?: boolean }) {
   const inert = overlay || still;
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: inert ? `inert:${task.id}` : seg ? `${task.id}@${seg.day}` : task.id,
-    data: { task, day: seg?.day },
+    id: inert ? `inert:${task.id}` : day ? `${task.id}@${day}` : task.id,
+    data: { task, day } satisfies DragData,
     disabled: inert,
   });
-  const bare = !!seg && !seg.labelled;
   return (
     <div
       ref={inert ? undefined : setNodeRef}
@@ -55,23 +82,50 @@ function CalTask({ seg, task, overlay, still }: { seg?: Segment; task: Task; ove
       {...(inert ? {} : listeners)}
       className="cal-task"
       data-done={task.status === "completed"}
-      data-open-left={seg?.openLeft || undefined}
-      data-open-right={seg?.openRight || undefined}
       style={{ opacity: isDragging && !overlay ? 0.35 : 1, boxShadow: overlay ? "var(--shadow-md)" : undefined }}
       onClick={(e) => {
         e.stopPropagation();
         openTask(task.id);
       }}
       title={task.title}
-      aria-label={bare ? task.title : undefined}
     >
-      {!bare && (
-        <>
-          <TaskCheck checked={task.status === "completed"} onToggle={() => void toggleComplete(task)} priority={task.priority} cancelled={!!task.resolution} />
-          {task.dueTime && <span className="faint tabular">{formatTime(task.dueTime)}</span>}
-          <TaskTitle title={task.title} done={task.status === "completed"} />
-        </>
-      )}
+      <TaskCheck checked={task.status === "completed"} onToggle={() => void toggleComplete(task)} priority={task.priority} cancelled={!!task.resolution} />
+      {task.dueTime && <span className="faint tabular">{formatTime(task.dueTime)}</span>}
+      <TaskTitle title={task.title} done={task.status === "completed"} />
+    </div>
+  );
+}
+
+/**
+ * A run of days, as one element spanning its columns of a week row. The two
+ * ends are square where the run carries on past them — into the row below,
+ * or off the grid — so a long task reads as one continuous bar.
+ */
+function CalBar({ bar }: { bar: Bar }) {
+  const { task } = bar;
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `${task.id}@${bar.from}`,
+    data: { task, day: bar.from, bar } satisfies DragData,
+  });
+  const done = task.status === "completed";
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className="cal-bar"
+      data-done={done}
+      data-open-left={bar.openLeft || undefined}
+      data-open-right={bar.openRight || undefined}
+      style={{ gridColumn: `${bar.col + 1} / span ${bar.span}`, gridRow: bar.lane + 1, opacity: isDragging ? 0.35 : 1 }}
+      onClick={(e) => {
+        e.stopPropagation();
+        openTask(task.id);
+      }}
+      title={`${task.title} · ${formatDue(task.startDate)} – ${formatDue(task.dueDate)}`}
+    >
+      <TaskCheck checked={done} onToggle={() => void toggleComplete(task)} priority={task.priority} cancelled={!!task.resolution} />
+      <TaskTitle title={task.title} done={done} />
     </div>
   );
 }
@@ -87,27 +141,27 @@ function CalEventChip({ e }: { e: CalEvent }) {
 
 function DayCell({
   day,
-  bars,
   tasks,
   events,
   month,
   today,
-  maxVisible,
-}: { day: string; bars: Segment[]; tasks: Task[]; events: CalEvent[]; month: number; today: string; maxVisible: number }) {
+  lines,
+}: { day: string; tasks: Task[]; events: CalEvent[]; month: number; today: string; lines: number }) {
   const { setNodeRef, isOver } = useDroppable({ id: `day:${day}` });
   const d = parseDateStr(day);
-  // Bars go at the top of every cell they cross, so a run of days lines up
-  // into one continuous band instead of stepping around the other rows.
-  const shownEvents = events.slice(0, Math.max(1, Math.min(2, maxVisible - bars.length - tasks.length)));
-  const budget = Math.max(1, maxVisible - shownEvents.length);
-  const shownBars = bars.slice(0, budget);
-  const visible = tasks.slice(0, Math.max(0, budget - shownBars.length));
-  const more = bars.length - shownBars.length + (tasks.length - visible.length) + (events.length - shownEvents.length);
+  const total = events.length + tasks.length;
+  // The "+n more" button takes a line of its own, so it only appears when
+  // something would otherwise be cut off.
+  const room = total > lines ? Math.max(0, lines - 1) : lines;
+  const shownEvents = events.slice(0, room);
+  const shownTasks = tasks.slice(0, Math.max(0, room - shownEvents.length));
+  const more = total - shownEvents.length - shownTasks.length;
   return (
     <div
       ref={setNodeRef}
       className="cal__cell"
       data-outside={d.getMonth() !== month}
+      data-weekend={isoWeekday(day) >= 6 || undefined}
       data-today={day === today}
       data-over={isOver || undefined}
       onDoubleClick={() => useUi.getState().openCapture("task", { dueDate: day })}
@@ -116,14 +170,11 @@ function DayCell({
         <b>{d.getDate() === 1 ? format(d, "d MMM") : d.getDate()}</b>
       </div>
       <div className="cal__tasks">
-        {shownBars.map((seg) => (
-          <CalTask key={seg.task.id} seg={seg} task={seg.task} />
-        ))}
         {shownEvents.map((e) => (
           <CalEventChip key={`${e.feedId}:${e.uid}:${e.start}`} e={e} />
         ))}
-        {visible.map((t) => (
-          <CalTask key={t.id} task={t} />
+        {shownTasks.map((t) => (
+          <CalChip key={t.id} task={t} day={day} />
         ))}
         {more > 0 && (
           <Popover trigger={<button type="button" className="cal__more">+{more} more</button>} pad>
@@ -134,11 +185,8 @@ function DayCell({
               {events.map((e) => (
                 <CalEventChip key={`${e.feedId}:${e.uid}:${e.start}`} e={e} />
               ))}
-              {bars.map((seg) => (
-                <CalTask key={seg.task.id} task={seg.task} still />
-              ))}
               {tasks.map((t) => (
-                <CalTask key={t.id} task={t} still />
+                <CalChip key={t.id} task={t} still />
               ))}
             </div>
           </Popover>
@@ -151,23 +199,13 @@ function DayCell({
 function Unscheduled({ tasks }: { tasks: Task[] }) {
   const { setNodeRef, isOver } = useDroppable({ id: "day:none" });
   return (
-    <aside
-      ref={setNodeRef}
-      style={{
-        width: 240,
-        borderLeft: "1px solid var(--border-subtle)",
-        display: "flex",
-        flexDirection: "column",
-        background: isOver ? "var(--accent-soft)" : "var(--bg-sunken)",
-        minHeight: 0,
-      }}
-    >
+    <aside ref={setNodeRef} className="cal-tray" data-over={isOver || undefined}>
       <div className="section-title" style={{ padding: "10px 12px 6px" }}>
         Unscheduled <span className="count">{tasks.length}</span>
       </div>
       <div className="col" style={{ gap: 2, padding: "0 8px 12px", overflowY: "auto" }}>
         {tasks.map((t) => (
-          <CalTask key={t.id} task={t} />
+          <CalChip key={t.id} task={t} />
         ))}
         {!tasks.length && <div className="faint" style={{ fontSize: "var(--fs-xs)", padding: "4px 4px" }}>Drag a task here to remove its date.</div>}
       </div>
@@ -181,6 +219,9 @@ export default function CalendarView() {
   const [showDone, setShowDone] = useState(false);
   const [showTray, setShowTray] = useState(true);
   const [dragging, setDragging] = useState<Task | null>(null);
+  // The day a drag was picked up by, worked out from where in a bar the
+  // pointer went down. Read once, at the drop.
+  const grabbed = useRef<string | undefined>(undefined);
   const days = useMemo(() => monthGrid(month), [month]);
   const { data: tasks } = useTasks({
     dueFrom: days[0],
@@ -214,35 +255,45 @@ export default function CalendarView() {
     return m;
   }, [events]);
   // A task with a start date earlier than its due date is a run of days, not
-  // a point: it's drawn as one bar across every cell between the two. The
-  // query asks by due date, so a run reaching in from an earlier month is
-  // clipped to the first cell of the grid.
-  // A task with a start date earlier than its due date is a run of days, not
-  // a point: it's drawn as one bar across every cell between the two.
-  const { bars, byDay } = useMemo(() => layOutDays(tasks ?? [], days, sortDay), [tasks, days]);
+  // a point: it's drawn as one bar per week row, in a band above the day's
+  // own chips, holding the same lane for its whole length.
+  const { weeks, byDay, overflow } = useMemo(() => layOutMonth(tasks ?? [], days, sortDay, MAX_LANES), [tasks, days]);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-  const onDragStart = (e: DragStartEvent) => setDragging((e.active.data.current as { task: Task }).task);
+  const onDragStart = (e: DragStartEvent) => {
+    const from = e.active.data.current as DragData;
+    setDragging(from.task);
+    grabbed.current = from.day;
+    // A bar covers several days with one element, so which of them was
+    // grabbed comes from where across it the pointer went down — otherwise a
+    // five-day bar held by the middle would jump its start to the cursor.
+    const rect = e.active.rect.current.initial;
+    const x = (e.activatorEvent as Partial<PointerEvent>).clientX;
+    if (from.bar && rect && typeof x === "number" && rect.width > 0) {
+      const i = Math.floor(((x - rect.left) / rect.width) * from.bar.span);
+      grabbed.current = addDaysStr(from.bar.from, Math.min(from.bar.span - 1, Math.max(0, i)));
+    }
+  };
   const onDragEnd = (e: DragEndEvent) => {
     setDragging(null);
-    const from = e.active.data.current as { task: Task; day?: string } | undefined;
-    const task = from?.task;
+    const task = (e.active.data.current as DragData | undefined)?.task;
     const target = e.over?.id ? String(e.over.id).slice(4) : null;
+    const from = grabbed.current;
+    grabbed.current = undefined;
     if (!task || target === null) return;
-    const date = target === "none" ? null : target;
-    if (date === null) {
-      void updateTask(task.id, { dueDate: null, dueTime: null }, { undoLabel: "Date removed" });
+    if (target === "none") {
+      void updateTask(task.id, { dueDate: null, dueTime: null, startDate: null }, { undoLabel: "Date removed" });
       return;
     }
     // Dragging a run moves the whole thing, so its length survives the move.
-    const next = movedTo(task, from?.day, date);
+    const next = movedTo(task, from, target);
     if (!next) return;
     void updateTask(task.id, next, { undoLabel: `Moved to ${formatDue(next.startDate ?? next.dueDate)}` });
   };
   const monthIdx = parseDateStr(month).getMonth();
 
   return (
-    <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragging(null)}>
+    <DndContext sensors={sensors} collisionDetection={collision} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragging(null)}>
       <div className="toolbar">
         <span style={{ fontWeight: 600, minWidth: 130 }}>{format(parseDateStr(month), "MMMM yyyy")}</span>
         <IconButton icon={ChevronLeft} label="Previous month" size="sm" onClick={() => setMonth(addMonthsStr(month, -1))} />
@@ -272,23 +323,33 @@ export default function CalendarView() {
             ))}
           </div>
           <div className="cal__grid">
-            {days.map((d) => (
-              <DayCell
-                key={d}
-                day={d}
-                bars={bars.get(d) ?? []}
-                tasks={byDay.get(d) ?? []}
-                events={eventsByDay.get(d) ?? []}
-                month={monthIdx}
-                today={today}
-                maxVisible={4}
-              />
+            {weeks.map((w) => (
+              <div key={w.days[0]} className="cal__week" style={{ ["--lanes" as string]: w.lanes } as CSSProperties}>
+                {w.days.map((d) => (
+                  <DayCell
+                    key={d}
+                    day={d}
+                    tasks={[...(overflow.get(d) ?? []), ...(byDay.get(d) ?? [])]}
+                    events={eventsByDay.get(d) ?? []}
+                    month={monthIdx}
+                    today={today}
+                    lines={Math.max(1, CELL_LINES - w.lanes)}
+                  />
+                ))}
+                {!!w.bars.length && (
+                  <div className="cal__band">
+                    {w.bars.map((b) => (
+                      <CalBar key={b.task.id} bar={b} />
+                    ))}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         </div>
         {showTray && <Unscheduled tasks={undated ?? []} />}
       </div>
-      <DragOverlay dropAnimation={null}>{dragging && <CalTask task={dragging} overlay />}</DragOverlay>
+      <DragOverlay dropAnimation={null}>{dragging && <CalChip task={dragging} overlay />}</DragOverlay>
     </DndContext>
   );
 }

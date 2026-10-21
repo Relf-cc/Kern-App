@@ -182,12 +182,12 @@ export function SpaceSwitcher({ collapsed }: { collapsed: boolean }) {
             <>
               <DM.Item className="menu__item" onSelect={() => void enableCloud()}>
                 <Wifi strokeWidth={1.75} />
-                <span>Turn on online collaboration…</span>
+                <span>Turn on online collaboration</span>
               </DM.Item>
               {!signedIn && (
                 <DM.Item className="menu__item" onSelect={() => void enableCloud("Sign in to Kern Cloud.")}>
                   <LogIn strokeWidth={1.75} />
-                  <span>Sign in…</span>
+                  <span>Sign in</span>
                 </DM.Item>
               )}
             </>
@@ -195,30 +195,30 @@ export function SpaceSwitcher({ collapsed }: { collapsed: boolean }) {
             <>
               <DM.Item className="menu__item" onSelect={() => useCloud.setState({ createOpen: true })}>
                 <Plus strokeWidth={1.75} />
-                <span>Create workspace…</span>
+                <span>Create workspace</span>
               </DM.Item>
               {active?.kind === "workspace" && (
                 <DM.Item className="menu__item" onSelect={() => useCloud.setState({ manage: { id: active.id, tab: "general" } })}>
                   <Settings2 strokeWidth={1.75} />
-                  <span className="truncate">Manage {active.name}…</span>
+                  <span className="truncate">Manage {active.name}</span>
                 </DM.Item>
               )}
               {isAdmin && (
                 <DM.Item className="menu__item" onSelect={() => useCloud.setState({ manage: { id: active!.id, tab: "invites" } })}>
                   <UserPlus strokeWidth={1.75} />
-                  <span>Invite people…</span>
+                  <span>Invite people</span>
                 </DM.Item>
               )}
               {active && (active.role === "owner" || active.role === "admin") && (
                 <DM.Item className="menu__item" onSelect={() => navigate({ name: "streams" })}>
                   <Radio strokeWidth={1.75} />
-                  <span>Streams…</span>
+                  <span>Streams</span>
                 </DM.Item>
               )}
               {active && active.role !== "viewer" && (
                 <DM.Item className="menu__item" onSelect={() => useCloud.setState({ importOpen: true })}>
                   <Copy strokeWidth={1.75} />
-                  <span>Copy offline data here…</span>
+                  <span>Copy offline data here</span>
                 </DM.Item>
               )}
               {active && (

@@ -14,6 +14,7 @@ import { PriorityIcon } from "./meta";
 import { GithubMark } from "@/features/github/shared";
 import { ProjectGlyph } from "@/features/projects/ProjectGlyph";
 import { Avatar } from "@/features/cloud/ui";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { DuePopover } from "./pickers";
 import { taskMenu } from "./menu";
 import { LabelChip } from "./labels";
@@ -36,15 +37,22 @@ export interface RowContext {
   showCreator: boolean;
 }
 
-/** The author's picture, at the end of the row. */
+/**
+ * The author's picture, at the end of the row. Hovering it names them: the
+ * face alone doesn't say who it is, and the row's own hover actions tuck in
+ * beside it rather than covering it, so there's something there to point at.
+ */
 function Creator({ task, people }: { task: Task; people: Map<string, Member> }) {
   if (!task.createdBy) return null;
   const member = people.get(task.createdBy);
   const name = member?.name || task.createdByName || "Someone else";
   return (
-    <span className="task-row__who">
-      <Avatar name={name} image={member?.image} size={18} title={`Created by ${name}`} />
-    </span>
+    <Tooltip content={`Created by ${name}`} side="top">
+      <span className="task-row__who">
+        {/* The tooltip says it; a native one as well would be two tips. */}
+        <Avatar name={name} image={member?.image} size={18} title={null} />
+      </span>
+    </Tooltip>
   );
 }
 
