@@ -95,7 +95,7 @@ Turn on **online collaboration** from the space menu at the top of the sidebar
   project), and invite people by email. Changes appear for everyone instantly,
   and whiteboards are multiplayer, with live cursors.
 - **Streams**: addresses your website or services send to
-  (`streams.relf.cloud/kern/<id>`), such as a "Report a bug" form or a failing
+  (`streams.relf.cc/kern/<id>`), such as a "Report a bug" form or a failing
   CI job. Each submission becomes a task, an inbox item or a GitHub issue in the
   space, with origin rules, secrets or signed requests, rate limits, spam checks,
   field validation and a delivery log. Owners and admins open them from the space

@@ -3,7 +3,7 @@
  * @Date 2026-10-13
  */
 
-// Streams: inbound endpoints (streams.relf.cloud/kern/<id>) that turn
+// Streams: inbound endpoints (streams.relf.cc/kern/<id>) that turn
 // submissions from websites and services - a bug report form, a CI job, a
 // webhook - into tasks, inbox items and GitHub issues in the open cloud
 // space. Owners and admins manage them here; everything is stored and

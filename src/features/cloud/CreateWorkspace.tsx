@@ -6,8 +6,15 @@
 // "Create workspace": a short guided flow. Basics → about the team → GitHub
 // organisation (optional) → invite people (optional) → review. Creating
 // switches to the new workspace and imports the chosen repositories.
+//
+// Some servers only let people they have invited create a workspace, and say
+// so in /instance as `workspaceKeys: "required"`. When this one does, the
+// first step also asks for the key. It is asked for up front rather than at
+// the end on purpose: being refused after filling in five steps is a horrible
+// way to find out, and the answer is usually "ask whoever runs this server",
+// which is better to read before the work than after it.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, Building2, Check, Loader, Mail, Sparkles } from "lucide-react";
 import { api } from "@/lib/ipc";
 import type { InviteResult, Space } from "@/lib/types";
@@ -19,6 +26,10 @@ import { errorText, refreshMe, useCloud } from "./store";
 import { spaceRef, switchSpace } from "./actions";
 import { AboutFields, BasicsFields, GithubPicker, InviteEditor, localTimeZone, TEAM_SIZES, validWebsite, type GithubChoice, type InviteDraft, type WorkspaceDraft } from "./workspaceFields";
 import { ROLE_LABEL, SpaceLogo, spaceLook } from "./ui";
+
+/** `k_` then 32 hex characters, which is what a server mints. Checked here
+ * only to catch a mis-paste early; the server decides whether it is real. */
+const KEY_SHAPE = /^k_[0-9a-f]{32}$/;
 
 const STEPS = [
   { id: "basics", label: "Basics" },
@@ -54,9 +65,32 @@ function Wizard() {
   const [github, setGithub] = useState<GithubChoice>({ org: null, repos: [], syncIssues: true });
   const [invites, setInvites] = useState<InviteDraft[]>([]);
   const [message, setMessage] = useState("");
+  const [key, setKey] = useState("");
+  /** null while we are still asking the server whether it wants one. */
+  const [needsKey, setNeedsKey] = useState<boolean | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
   const [done, setDone] = useState<{ space: Space; invites: InviteResult[]; imported: number } | null>(null);
   const set = (p: Partial<WorkspaceDraft>) => setDraft((d) => ({ ...d, ...p }));
+
+  // Ask this server whether creating a workspace takes a key. A server too
+  // old to answer, or one that cannot be reached, is treated as not wanting
+  // one: it will refuse the creation itself if it does, with a message that
+  // says so, and that is better than blocking the flow on a field nobody can
+  // fill in.
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const info = await api.cloud.request<{ workspaceKeys?: string }>("GET", "/instance");
+        if (live) setNeedsKey(info.workspaceKeys === "required");
+      } catch {
+        if (live) setNeedsKey(false);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
   const close = () => useCloud.setState({ createOpen: false });
   const index = STEPS.findIndex((s) => s.id === step);
 
@@ -64,6 +98,8 @@ function Wizard() {
     if (s === "basics") {
       if (!draft.name.trim()) return "Give the workspace a name.";
       if (draft.slug && draft.slug.length < 3) return "The workspace ID needs at least 3 characters.";
+      if (needsKey && !key.trim()) return "This server needs a workspace key.";
+      if (needsKey && !KEY_SHAPE.test(key.trim())) return "That doesn't look like a workspace key.";
     }
     if (s === "about" && !validWebsite(draft.website)) return "The website should start with https://";
     return null;
@@ -88,6 +124,7 @@ function Wizard() {
         githubOrg: github.org,
         invites: invites.length ? invites : undefined,
         inviteMessage: message.trim() || undefined,
+        key: key.trim() || undefined,
       });
       await refreshMe();
       setProgress("Opening it…");
@@ -108,6 +145,14 @@ function Wizard() {
       }
       setDone({ space: res.workspace, invites: res.invites, imported });
     } catch (e) {
+      // The server has the last word on the key, and says which way it is
+      // wrong. Send the person back to the field rather than leaving them on
+      // the review step with a toast and nowhere to type.
+      const code = (e as { code?: string } | null)?.code;
+      if (code === "workspace_key") {
+        setNeedsKey(true);
+        setStep("basics");
+      }
       toastError(errorText(e, "Couldn't create the workspace."));
     } finally {
       setProgress(null);
@@ -209,6 +254,25 @@ function Wizard() {
             <>
               <p className="wizard__lead">A workspace is a shared space for a team: projects, boards, tasks, issues, notes and whiteboards sync to every member in real time. Files and folders stay on each person's computer.</p>
               <BasicsFields draft={draft} set={set} />
+              {needsKey && (
+                <div className="field">
+                  <label className="field__label">Workspace key</label>
+                  <input
+                    className="input mono"
+                    value={key}
+                    maxLength={40}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    placeholder="k_…"
+                    onChange={(e) => setKey(e.target.value.trim())}
+                  />
+                  <p className="field__hint">
+                    This server only lets people it has invited create a workspace. Paste the key you were given — joining a workspace
+                    somebody invites you to never needs one.
+                  </p>
+                </div>
+              )}
             </>
           )}
           {step === "about" && (

@@ -17,6 +17,7 @@
 //! appear within moments.
 
 pub mod client;
+pub mod servers;
 pub mod sync;
 
 use crate::db;
@@ -200,12 +201,18 @@ fn base(state: &AppState) -> AppResult<String> {
         if !settings::get_or(c, "privacy.network", true) {
             return invalid("Network access is turned off in Settings → Privacy, so Kern Cloud is unavailable.");
         }
-        Ok(client::api_base())
+        Ok(servers::active(&state.paths.data_dir).url)
     })
 }
 
+/// The credential-store entry for whichever server is in use. Sessions are
+/// kept per server, so pointing Kern somewhere else never carries one along.
+fn token_ref(state: &AppState) -> String {
+    servers::token_ref(&servers::active(&state.paths.data_dir).url)
+}
+
 fn token(state: &AppState) -> AppResult<String> {
-    match state.ai.vault.get(client::TOKEN_REF)? {
+    match state.ai.vault.get(&token_ref(state))? {
         Some(t) => Ok(t.expose().to_string()),
         None => Err(AppError::Auth("Sign in to Kern Cloud first.".into())),
     }
@@ -219,7 +226,7 @@ fn authed(app: &AppHandle, method: &str, path: &str, body: Option<&Value>) -> Ap
     match client::check(client::request(&base, Some(&token), method, path, body)) {
         Ok(r) => Ok(r.body),
         Err(AppError::Auth(m)) => {
-            let _ = state.ai.vault.delete(client::TOKEN_REF);
+            let _ = state.ai.vault.delete(&token_ref(&state));
             set_status(app, |s| {
                 s.state = "signed_out".into();
                 s.message = Some(m.clone());
@@ -245,7 +252,7 @@ fn signed_in(app: &AppHandle, reply: client::Reply) -> AppResult<Account> {
     if previous.as_ref().map(|p| p.id != user.id).unwrap_or(false) && state.cloud.is_active() {
         open_space_now(app, None)?;
     }
-    state.ai.vault.set(client::TOKEN_REF, &crate::domain::ai::vault::Secret::new(token))?;
+    state.ai.vault.set(&token_ref(&state), &crate::domain::ai::vault::Secret::new(token))?;
     state.with(|c| settings::set(c, "cloud.account", &serde_json::to_value(&user)?))?;
     set_status(app, |s| {
         if s.state == "signed_out" {
@@ -497,7 +504,7 @@ pub fn start_worker(app: AppHandle) {
                 if Instant::now() < retry_at {
                     continue;
                 }
-                if state.ai.vault.get(client::TOKEN_REF).ok().flatten().is_none() {
+                if state.ai.vault.get(&token_ref(&state)).ok().flatten().is_none() {
                     set_status(&app, |s| {
                         s.state = "signed_out".into();
                         s.message = Some("Sign in to sync this space.".into());
@@ -585,18 +592,190 @@ pub struct CloudInfo {
     pub account: Option<Account>,
     pub active: Option<ActiveSpace>,
     pub sync: SyncStatus,
+    /// Which server this is, and whether the choice can be changed here.
+    pub server: servers::Active,
 }
 
 #[tauri::command]
 pub fn cloud_status(state: tauri::State<AppState>) -> AppResult<CloudInfo> {
-    let (api, account) = state.with(|c| Ok((client::api_base(), account(c))))?;
-    let signed_in = state.ai.vault.get(client::TOKEN_REF).ok().flatten().is_some();
+    let server = servers::active(&state.paths.data_dir);
+    let api = server.url.clone();
+    let account = state.with(|c| Ok(account(c)))?;
+    let signed_in = state.ai.vault.get(&servers::token_ref(&api)).ok().flatten().is_some();
     let mut sync = state.cloud.status();
     if sync.state.is_empty() {
         sync.state = if state.cloud.is_active() { "idle".into() } else { "off".into() };
     }
     sync.pending = state.with(|c| Ok(if sync::space_of(c).is_some() { sync::pending_count(c) } else { 0 }))?;
-    Ok(CloudInfo { ws_url: client::ws_url(&api), api_url: api, signed_in, account, active: state.cloud.active(), sync })
+    Ok(CloudInfo { ws_url: client::ws_url(&api), api_url: api, signed_in, account, active: state.cloud.active(), sync, server })
+}
+
+// --------------------------------------------------------- choosing a server
+//
+// Kern Cloud is a server, not a service: the same code runs at the public
+// address and on somebody's own machine (the Kern-Cloud-Self-Host
+// repository). These commands are how the app is pointed at one. The rules
+// they enforce live in servers.rs - in short: the environment wins if it is
+// set, a session belongs to one origin, and adding a server is confirmed in a
+// dialog the webview cannot press.
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerCheck {
+    pub url: String,
+    pub name: String,
+    pub protocol: i64,
+    /// "open" | "invite" | "closed" - what the sign-up screen should offer.
+    pub registration: String,
+    /// A note from this server's administrator, for the sign-in screen.
+    pub notice: Option<String>,
+    pub contact: Option<String>,
+    /// Whether the server can actually send a verification code.
+    pub sends_email: bool,
+    /// Set when the address is allowed but unencrypted.
+    pub warning: Option<String>,
+    /// True when it is already in the list.
+    pub added: bool,
+}
+
+/// The sync and realtime protocol this build speaks. A server answering with
+/// a higher number is newer than this app, and saying so plainly beats
+/// failing later in a way nobody can diagnose.
+const PROTOCOL: i64 = 1;
+
+/// Asks an address what it is. Saves nothing and sends no token, so it is
+/// safe to call on whatever somebody types.
+#[tauri::command]
+pub async fn cloud_server_check(app: AppHandle, url: String) -> AppResult<ServerCheck> {
+    blocking(&app, move |app| {
+        let state = app.state::<AppState>();
+        state.with(|c| {
+            if !settings::get_or(c, "privacy.network", true) {
+                return invalid("Network access is turned off in Settings -> Privacy.");
+            }
+            Ok(())
+        })?;
+        let verdict = servers::vet(&url)?;
+        let reply = client::check(client::request(&verdict.url, None, "GET", "/instance", None))?;
+        let body = reply.body;
+        if body.get("service").and_then(|s| s.as_str()) != Some("kern-cloud") {
+            return Err(AppError::Invalid(format!("{} answered, but it isn't a Kern server.", verdict.url)));
+        }
+        let protocol = body.get("protocol").and_then(|p| p.as_i64()).unwrap_or(0);
+        if protocol > PROTOCOL {
+            return Err(AppError::Invalid(format!(
+                "{} speaks a newer version of Kern than this app (protocol {protocol}; this is {PROTOCOL}). Update Kern first.",
+                verdict.url
+            )));
+        }
+        let already = servers::list(&state.paths.data_dir).iter().any(|s| s.url == verdict.url);
+        Ok(ServerCheck {
+            name: body.get("name").and_then(|n| n.as_str()).unwrap_or("Kern").to_string(),
+            protocol,
+            registration: body.get("registration").and_then(|r| r.as_str()).unwrap_or("invite").to_string(),
+            notice: body.get("notice").and_then(|n| n.as_str()).map(String::from),
+            contact: body.get("contact").and_then(|n| n.as_str()).map(String::from),
+            sends_email: body.get("features").and_then(|f| f.get("email")).and_then(|e| e.as_bool()).unwrap_or(false),
+            warning: verdict.warning,
+            added: already,
+            url: verdict.url,
+        })
+    })
+    .await
+}
+
+/// Adds a server and chooses it, after asking in a native dialog. The
+/// interface may propose a server; only the person can accept one.
+#[tauri::command]
+pub async fn cloud_server_add(app: AppHandle, url: String, name: String) -> AppResult<CloudInfo> {
+    let check = cloud_server_check(app.clone(), url).await?;
+    let confirmed = {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+        let host = url::Url::parse(&check.url)
+            .ok()
+            .and_then(|u| u.host_str().map(String::from))
+            .unwrap_or_else(|| check.url.clone());
+        let mut body = format!(
+            "Kern will sign in to \"{}\" at {}.\n\nYour account there is separate from every other Kern server, and anything you choose to sync will be stored on it.",
+            check.name, host
+        );
+        if let Some(w) = &check.warning {
+            body.push_str("\n\n");
+            body.push_str(w);
+        }
+        app.dialog()
+            .message(body)
+            .title("Use this Kern server?")
+            .buttons(MessageDialogButtons::OkCancelCustom("Use this server".into(), "Cancel".into()))
+            .blocking_show()
+    };
+    if !confirmed {
+        return Err(AppError::Invalid("Left as it was.".into()));
+    }
+    let instance_name = Some(check.name.clone());
+    let target = check.url.clone();
+    blocking(&app, move |app| {
+        let state = app.state::<AppState>();
+        let dir = state.paths.data_dir.clone();
+        servers::add(&dir, &target, &name, instance_name)?;
+        servers::select(&dir, Some(&target))?;
+        Ok(())
+    })
+    .await?;
+    switched(&app)?;
+    cloud_status(app.state::<AppState>())
+}
+
+/// The servers this copy of Kern knows about.
+#[tauri::command]
+pub fn cloud_servers(state: tauri::State<AppState>) -> AppResult<Vec<servers::Server>> {
+    Ok(servers::list(&state.paths.data_dir))
+}
+
+/// Chooses a server. `None` means the public Kern Cloud.
+#[tauri::command]
+pub async fn cloud_server_select(app: AppHandle, url: Option<String>) -> AppResult<CloudInfo> {
+    blocking(&app, move |app| {
+        let state = app.state::<AppState>();
+        servers::select(&state.paths.data_dir, url.as_deref())?;
+        Ok(())
+    })
+    .await?;
+    switched(&app)?;
+    cloud_status(app.state::<AppState>())
+}
+
+/// Removes a server, and forgets the session held for it.
+#[tauri::command]
+pub async fn cloud_server_remove(app: AppHandle, url: String) -> AppResult<CloudInfo> {
+    blocking(&app, move |app| {
+        let state = app.state::<AppState>();
+        servers::remove(&state.paths.data_dir, &url)?;
+        // The session goes with the server: leaving it behind would keep a
+        // key to something the person thinks they have removed.
+        let _ = state.ai.vault.delete(&servers::token_ref(&url));
+        Ok(())
+    })
+    .await?;
+    switched(&app)?;
+    cloud_status(app.state::<AppState>())
+}
+
+/// Closes whatever was open and tells the interface to start again. A
+/// different server means a different account and a different set of spaces,
+/// so nothing on screen survives the change.
+fn switched(app: &AppHandle) -> AppResult<()> {
+    let state = app.state::<AppState>();
+    if state.cloud.is_active() {
+        open_space_now(app, None)?;
+    }
+    set_status(app, |s| {
+        s.state = "off".into();
+        s.message = None;
+        s.pending = 0;
+    });
+    let _ = app.emit("kern://cloud-server", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -714,7 +893,7 @@ pub async fn cloud_sign_out(app: AppHandle, forget: bool) -> AppResult<bool> {
             Err(_) => false,
         };
         open_space_now(app, None)?;
-        let _ = state.ai.vault.delete(client::TOKEN_REF);
+        let _ = state.ai.vault.delete(&token_ref(&state));
         let acct = state.with(|c| Ok(account(c)))?;
         if forget {
             if let Some(a) = &acct {

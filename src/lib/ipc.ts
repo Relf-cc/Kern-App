@@ -381,6 +381,14 @@ export const api = {
   /** Kern Cloud. Requests are made by the backend, which holds the session. */
   cloud: {
     status: () => call<T.CloudInfo>("cloud_status"),
+    // Which server to talk to. Adding one is confirmed in a native dialog the
+    // webview cannot press, and a session belongs to one origin, so these
+    // cannot hand the token to a host of the front end's choosing.
+    servers: () => call<T.CloudServer[]>("cloud_servers"),
+    serverCheck: (url: string) => call<T.ServerCheck>("cloud_server_check", { url }),
+    serverAdd: (url: string, name = "") => call<T.CloudInfo>("cloud_server_add", { url, name }),
+    serverSelect: (url: string | null) => call<T.CloudInfo>("cloud_server_select", { url }),
+    serverRemove: (url: string) => call<T.CloudInfo>("cloud_server_remove", { url }),
     signUp: (name: string, email: string, password: string) => call<void>("cloud_sign_up", { name, email, password }),
     signIn: (email: string, password: string) => call<T.CloudAccount>("cloud_sign_in", { email, password }),
     sendCode: (email: string, purpose: "verify" | "sign-in" | "reset") => call<void>("cloud_send_code", { email, purpose }),

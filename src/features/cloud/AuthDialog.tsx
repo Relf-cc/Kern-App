@@ -7,7 +7,8 @@
 // email with a code, sign in with a code, and recover a forgotten password.
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, Cloud, Eye, EyeOff, MailCheck } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, Cloud, Eye, EyeOff, MailCheck, Server } from "lucide-react";
 import { api, KernError } from "@/lib/ipc";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -48,7 +49,33 @@ const TITLES: Record<AuthMode, string> = {
 
 export function AuthDialog() {
   const req = useCloud((s) => s.auth);
-  return req ? <AuthFlow key={JSON.stringify({ m: req.mode, e: req.email })} /> : null;
+  // The server is part of the key: it decides which account this is about, so
+  // switching servers mid-dialog starts the flow again rather than carrying
+  // a half-typed sign-in across.
+  const server = useCloud((s) => s.info?.server.url);
+  return req ? <AuthFlow key={JSON.stringify({ m: req.mode, e: req.email, s: server })} /> : null;
+}
+
+/**
+ * What the server this is signing in to says about itself: its name, whether
+ * it takes new accounts, and any note from its administrator.
+ *
+ * Asking is a plain unauthenticated GET /instance, so it costs nothing and
+ * sends nothing. On the public server there is nothing worth saying, and on
+ * somebody else's there is: the sign-up link is pointless if the server is
+ * closed, and "we couldn't send you a code" is baffling without the line
+ * explaining that this server has no mail set up.
+ */
+function useServerInfo() {
+  const server = useCloud((s) => s.info?.server);
+  const check = useQuery({
+    queryKey: ["cloud", "instance", server?.url],
+    queryFn: () => api.cloud.serverCheck(server!.url),
+    enabled: !!server,
+    staleTime: 60_000,
+    retry: false,
+  });
+  return { server, info: check.data ?? null };
 }
 
 function AuthFlow() {
@@ -65,6 +92,21 @@ function AuthFlow() {
   const [cooldown, setCooldown] = useState(0);
   // After verifying a new account, sign in with the password typed at sign-up.
   const [codeSent, setCodeSent] = useState(false);
+
+  const { server, info: serverInfo } = useServerInfo();
+  /** True on anything but the public Kern Cloud: then whose server this is
+   * matters, and the screen says so. */
+  const ownServer = !!server && server.source !== "default";
+  const host = (() => {
+    try {
+      return new URL(server?.url ?? "").host;
+    } catch {
+      return server?.url ?? "";
+    }
+  })();
+  /** The server takes no new accounts, so offering a sign-up form would only
+   * lead to a refusal nobody could act on. */
+  const closed = !!serverInfo && serverInfo.registration !== "open";
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -124,6 +166,12 @@ function AuthFlow() {
           await finish();
         });
       case "sign-up":
+        if (closed)
+          return setError(
+            serverInfo!.registration === "invite"
+              ? `${serverInfo!.name} only takes new accounts by invitation. Ask its administrator for one${serverInfo!.contact ? ` (${serverInfo!.contact})` : ""}.`
+              : `${serverInfo!.name} isn't taking new accounts.`,
+          );
         if (password.length < 8) return setError("Use at least 8 characters for your password.");
         return void run(async () => {
           await api.cloud.signUp(name, email, password);
@@ -317,6 +365,19 @@ function AuthFlow() {
     >
       <form className="col auth" style={{ gap: 12 }} onSubmit={submit}>
         {req.reason && mode === "sign-in" && <div className="auth__reason">{req.reason}</div>}
+        {ownServer && (
+          <div className="auth__notice auth__server">
+            <span className="row" style={{ gap: 6, fontWeight: 600 }}>
+              <Server size={13} /> {serverInfo?.name ?? server!.name}
+            </span>
+            <span>
+              {host} — your account here is separate from every other Kern server.
+            </span>
+            {serverInfo?.notice && <span>“{serverInfo.notice}”</span>}
+            {serverInfo && !serverInfo.sendsEmail && <span>This server can't send email, so codes come from its administrator instead.</span>}
+            {serverInfo?.contact && <span>Contact: {serverInfo.contact}</span>}
+          </div>
+        )}
         {notice && <div className="auth__notice">{notice}</div>}
         {body}
         {error && (
@@ -327,11 +388,18 @@ function AuthFlow() {
         <Button type="submit" variant="primary" block disabled={busy}>
           {primary}
         </Button>
-        {mode === "sign-in" && (
-          <div className="auth__switch">
-            New to Kern Cloud? {link("Create an account", () => go("sign-up"))}
-          </div>
-        )}
+        {mode === "sign-in" &&
+          (closed ? (
+            <div className="auth__switch">
+              {serverInfo!.registration === "invite"
+                ? "New accounts here need an invitation from this server's administrator."
+                : "This server isn't taking new accounts."}
+            </div>
+          ) : (
+            <div className="auth__switch">
+              New to {serverInfo?.name ?? "Kern Cloud"}? {link("Create an account", () => go("sign-up"))}
+            </div>
+          ))}
         {mode === "sign-up" && (
           <div className="auth__switch">
             Already have an account? {link("Sign in", () => go("sign-in"))}

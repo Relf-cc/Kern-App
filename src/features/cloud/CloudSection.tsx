@@ -17,6 +17,7 @@ import { SToggle } from "@/features/settings/controls";
 import { useSetting } from "@/stores/settings";
 import { toast, toastError } from "@/stores/toast";
 import { disableCloud, enableCloud, openPersonal, signOut, switchSpace } from "./actions";
+import { ServerSection } from "./ServerSection";
 import { errorText, openAuth, refreshMe, refreshStatus, useActiveSpace, useCloud } from "./store";
 import { syncLabel } from "./SpaceSwitcher";
 import { Avatar, processLogo, timeAgo } from "./ui";
@@ -94,6 +95,8 @@ export function CloudSection() {
           </div>
         </div>
       </section>
+
+      <ServerSection />
 
       {!signedIn ? (
         <>

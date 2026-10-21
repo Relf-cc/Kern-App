@@ -372,6 +372,11 @@ pub fn run() {
             github::github_import_repos,
             // Kern Cloud: account, spaces, sync
             cloud::cloud_status,
+            cloud::cloud_servers,
+            cloud::cloud_server_check,
+            cloud::cloud_server_add,
+            cloud::cloud_server_select,
+            cloud::cloud_server_remove,
             cloud::cloud_sign_up,
             cloud::cloud_sign_in,
             cloud::cloud_send_code,

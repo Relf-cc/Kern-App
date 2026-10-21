@@ -791,3 +791,22 @@
 .tint-option > .col {
   gap: 2px;
 }
+
+/* Settings -> Kern server: the "in use" marker beside a server's name. */
+.server-row__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+/* The sign-in dialog's header when signing in to somebody's own server:
+   several short lines rather than one. */
+.auth__server {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}

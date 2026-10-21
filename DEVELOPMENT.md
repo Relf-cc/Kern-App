@@ -150,18 +150,29 @@ as CSV, notes as Markdown and projects as JSON.
 
 ## Kern Cloud (optional sync and collaboration)
 
-The server lives in the separate `KERNWEB` repository (Node, Hono, Better Auth,
-PostgreSQL) at `https://api.relf.cloud/kern/v1`. Development builds can point
-elsewhere with `KERN_CLOUD_URL` (e.g. `http://localhost:8787/kern/v1`).
+The server lives in the separate `Kern-Cloud-Self-Host` repository (Node, Hono,
+Better Auth, PostgreSQL) at `https://api.relf.cc/kern/v1`. Development builds
+can point elsewhere with `KERN_CLOUD_URL` (e.g. `http://localhost:8787/kern/v1`).
 
-That environment variable is the *only* way to move the address, and
-deliberately so: `client::api_base()` takes no argument and reads no setting.
-The session token is sent as a bearer to whatever it returns, and the request
-is made in Rust with `ureq`, where the window's CSP doesn't apply - so an
-address the front end could write would be a way to hand the token to another
-host. Settings are writable from the front end (`settings_set` takes any key),
-so a backend-trusted address must not live there. Self-hosting uses the
-environment variable too.
+The address matters more than it looks. The session token is sent as a bearer
+to whatever it resolves to, and the request is made in Rust with `ureq`, where
+the window's CSP doesn't apply - so an address the front end could write on its
+own would be a way to hand the token to another host. Settings are writable
+from the front end (`settings_set` takes any key), so the address must not live
+there. `domain/cloud/servers.rs` owns it instead, under three rules:
+
+1. **`KERN_CLOUD_URL` wins and locks the choice.** Whoever starts Kern keeps
+   the final say and the interface cannot override it (`Source::Environment`).
+2. **A session belongs to one origin.** The credential-store entry is keyed by
+   host, so pointing Kern elsewhere never carries an existing token along. The
+   default server keeps the bare `kern-cloud-session` name so installs stay
+   signed in across the upgrade that added per-server sessions.
+3. **Adding a server is confirmed natively.** `cloud_server_add` puts up an OS
+   message dialog the webview cannot press, so a compromised front end cannot
+   quietly add a host and select it.
+
+With none of those exercised, the default is `DEFAULT_API` in that module.
+Self-hosters add their server in Settings, or set the environment variable.
 
 Signing out reports whether the server actually ended the session
 (`cloud_sign_out` returns a bool). The local token is removed either way, but
@@ -170,6 +181,14 @@ holding a copy of the token, so the interface says so rather than claiming a
 clean sign-out; a rejected session counts as revoked, since it was already
 gone.
 
+- **Workspace keys**: a server may only let people it has invited create a
+  workspace, which it declares as `workspaceKeys: "required"` in `/instance`.
+  The create wizard asks that on open and, when required, takes a `k_<32 hex>`
+  key on its first step and sends it as `key`. A refusal comes back as
+  `AppError::WorkspaceKey` (code `workspace_key`), which returns the person to
+  the field rather than leaving them on the review step. Joining a workspace by
+  invitation never needs one, nor does anything inside a workspace, nor the
+  personal space. Minting them is the server's side; see that repository.
 - **Offline mode** is the ordinary `kern.db`, unchanged and account-free.
 - **Spaces**: the personal space and each workspace get a local replica at
   `cloud/<user>/<space>.db` with the same schema, so every feature works the
@@ -205,7 +224,7 @@ gone.
   by hash) and referenced as `data.cloudAsset`. Other computers show the original
   when they have it, otherwise download the shared copy into
   `cache/cloud-assets/<space>/` (`cloud_image_path`).
-- **Invitations**: `link.relf.cloud/kern/invite/<id>` hands off to
+- **Invitations**: `api.relf.cc/kern/invite/<id>` hands off to
   `kern://invite/<id>` (tauri-plugin-deep-link; single-instance forwards it).
 - Backups, restore and "export everything" cover offline data only; automatic
   orphaned-asset cleanup is skipped once cloud replicas exist (their whiteboards

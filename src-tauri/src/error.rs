@@ -32,6 +32,12 @@ pub enum AppError {
     /// A project behind a passkey, not opened with one yet this session.
     #[error("{0}")]
     Locked(String),
+    /// This server only lets people it has invited create a workspace, and the
+    /// key offered was missing, malformed, revoked, or already another
+    /// account's. Its own variant so the interface can put the person back in
+    /// front of the field instead of showing a toast and nothing to type in.
+    #[error("{0}")]
+    WorkspaceKey(String),
     #[error("{0}")]
     Other(String),
 }
@@ -61,6 +67,7 @@ impl AppError {
             AppError::Auth(_) => "auth",
             AppError::Unverified(_) => "unverified",
             AppError::Locked(_) => "locked",
+            AppError::WorkspaceKey(_) => "workspace_key",
             AppError::Other(_) => "other",
         }
     }

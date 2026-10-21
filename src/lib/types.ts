@@ -1820,6 +1820,53 @@ export interface SyncStatus {
   message: string | null;
 }
 
+/**
+ * A Kern Cloud server this copy of Kern knows about.
+ *
+ * Kern Cloud is a server, not a service: the same code runs at the public
+ * address and on somebody's own machine. The list lives in a file only the
+ * back end writes - see `domain/cloud/servers.rs` for why it isn't a setting.
+ */
+export interface CloudServer {
+  /** The API base, e.g. `https://kern.example.com/kern/v1`. */
+  url: string;
+  /** What to call it here. */
+  name: string;
+  /** The instance's own name, from its `/instance` reply when it was added. */
+  instanceName: string | null;
+  addedAt: number | null;
+}
+
+/** Where the choice of server came from. */
+export type ServerSource = "environment" | "chosen" | "default";
+
+/** The server in use, and whether the choice can be changed in the app. */
+export interface ActiveServer {
+  url: string;
+  source: ServerSource;
+  name: string;
+}
+
+/** What sign-ups a server allows. */
+export type Registration = "open" | "invite" | "closed";
+
+/** A server's answer to `GET /instance`, before any account exists. */
+export interface ServerCheck {
+  url: string;
+  name: string;
+  protocol: number;
+  registration: Registration;
+  /** A note from this server's administrator, for the sign-in screen. */
+  notice: string | null;
+  contact: string | null;
+  /** Whether the server can actually send a verification code. */
+  sendsEmail: boolean;
+  /** Set when the address is allowed but not encrypted. */
+  warning: string | null;
+  /** True when it is already in the list. */
+  added: boolean;
+}
+
 export interface CloudInfo {
   apiUrl: string;
   wsUrl: string;
@@ -1827,6 +1874,8 @@ export interface CloudInfo {
   account: CloudAccount | null;
   active: ActiveSpace | null;
   sync: SyncStatus;
+  /** Which server this is, and whether the choice can be changed here. */
+  server: ActiveServer;
 }
 
 export type TeamSize = "just-me" | "2-10" | "11-50" | "51-200" | "201-1000" | "1000+";

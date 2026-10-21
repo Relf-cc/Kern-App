@@ -83,6 +83,17 @@ function useCloudEffects() {
         }
       }),
       listen("kern://cloud-readonly", () => toast("You have view-only access here, so changes weren't saved.", { tone: "error" })),
+      // A different Kern server is a different account and a different set of
+      // spaces, so the interface starts again rather than showing the last
+      // one's data under the new one's name.
+      listen("kern://cloud-server", () => {
+        useCloud.setState({ me: null, peers: {} });
+        void queryClient.invalidateQueries({ queryKey: ["cloud"] });
+        void refreshStatus().then((fresh) => {
+          resetInterface(fresh?.active?.id ?? null);
+          if (fresh?.signedIn) void refreshMe();
+        });
+      }),
       listen("kern://deep-link", () => void handleDeepLinks()),
     ];
     return () => offs.forEach((p) => void p.then((f) => f()));

@@ -1,41 +1,18 @@
 // @Author Christian Relf
 // @Date 2026-10-13
 
-//! HTTP client for the Kern Cloud API (api.relf.cloud/kern/v1).
+//! HTTP client for the Kern Cloud API.
 //!
 //! The session token lives in the OS credential store and is only ever used
 //! here, in the backend; the interface never sees it. The realtime socket is
 //! opened by the interface with a short-lived ticket instead.
+//!
+//! Which server a request goes to is decided by `servers.rs`, not here: this
+//! module is given a base and sends to it.
 
 use crate::error::{AppError, AppResult};
 use serde_json::Value;
 use std::time::Duration;
-
-pub const DEFAULT_API: &str = "https://api.relf.cloud/kern/v1";
-/// Credential-store entry holding the session token.
-pub const TOKEN_REF: &str = "kern-cloud-session";
-
-/// The API base: `KERN_CLOUD_URL` (development or self-hosting), or the
-/// public server.
-///
-/// Deliberately not a setting. The session token is sent as a bearer to
-/// whatever this returns, so a value the front end could write would let
-/// anything running in the webview point the token at a host of its own
-/// choosing - and these requests are made here, in Rust, where the window's
-/// CSP cannot refuse them. The environment is set by whoever starts Kern,
-/// which the webview cannot do.
-pub fn api_base() -> String {
-    from_env(std::env::var("KERN_CLOUD_URL").ok())
-}
-
-/// The rule on its own, taking the environment value rather than reading it,
-/// so it can be tested without disturbing the process environment.
-fn from_env(raw: Option<String>) -> String {
-    raw.filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_API.to_string())
-        .trim_end_matches('/')
-        .to_string()
-}
 
 pub fn ws_url(base: &str) -> String {
     let ws = if let Some(rest) = base.strip_prefix("https://") { format!("wss://{rest}") } else { base.replacen("http://", "ws://", 1) };
@@ -141,6 +118,9 @@ pub fn check(reply: AppResult<Reply>) -> AppResult<Reply> {
         401 if code == "INVALID_EMAIL_OR_PASSWORD" => AppError::Invalid("That email and password don't match an account.".into()),
         401 => AppError::Auth(msg("Your Kern Cloud session has ended. Sign in again.")),
         403 if code == "EMAIL_NOT_VERIFIED" || code == "unverified" => AppError::Unverified(msg("Confirm your email address first.")),
+        403 if code == "workspace_key_required" || code == "workspace_key_invalid" => {
+            AppError::WorkspaceKey(msg("This server needs a workspace key to create a workspace."))
+        }
         429 => AppError::Network("Too many attempts. Wait a minute, then try again.".into()),
         s if s >= 500 => AppError::Network(format!("Kern Cloud is having trouble right now ({s}). Try again shortly.")),
         404 if message.is_none() => AppError::NotFound("That".into()),
@@ -157,22 +137,13 @@ mod tests {
     fn websocket_url_follows_the_api() {
         assert_eq!(ws_url("https://api.relf.cloud/kern/v1"), "wss://api.relf.cloud/kern/v1/realtime");
         assert_eq!(ws_url("http://localhost:8787/kern/v1"), "ws://localhost:8787/kern/v1/realtime");
+        assert_eq!(ws_url("https://kern.example.com/kern/v1"), "wss://kern.example.com/kern/v1/realtime");
     }
 
     #[test]
     fn paths_stay_on_the_api() {
         assert!(request("https://api.relf.cloud/kern/v1", None, "GET", "https://evil.example/x", None).is_err());
         assert!(request("https://api.relf.cloud/kern/v1", None, "GET", "/../x", None).is_err());
-    }
-
-    #[test]
-    fn the_api_host_comes_only_from_the_environment() {
-        // The session token is sent to whatever api_base returns, so nothing
-        // the front end can write may change it - only the environment, set
-        // by whoever launches Kern.
-        assert_eq!(from_env(None), DEFAULT_API);
-        assert_eq!(from_env(Some("  ".into())), DEFAULT_API);
-        assert_eq!(from_env(Some("http://localhost:8787/kern/v1/".into())), "http://localhost:8787/kern/v1");
     }
 
     #[test]
