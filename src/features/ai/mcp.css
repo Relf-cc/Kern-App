@@ -1,0 +1,91 @@
+/**
+ * @Author Christian Relf
+ * @Date 2026-10-22
+ */
+
+/* Settings → API → Assistants. The status pill and the activity list; the
+   rest of the tab uses the shared settings rows. */
+
+.mcp-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.mcp-status__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-4);
+  flex-shrink: 0;
+}
+.mcp-status[data-status="on"],
+.mcp-status[data-status="approved"] {
+  color: var(--text);
+}
+.mcp-status[data-status="on"] .mcp-status__dot,
+.mcp-status[data-status="approved"] .mcp-status__dot {
+  background: var(--text);
+}
+.mcp-status[data-status="pending"] .mcp-status__dot {
+  background: var(--warning);
+}
+.mcp-status[data-status="revoked"] .mcp-status__dot {
+  background: var(--danger);
+}
+
+.mcp-command {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.mcp-audit {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.mcp-audit li {
+  display: grid;
+  grid-template-columns: 74px 120px 150px 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 10px;
+  font-size: var(--fs-sm);
+  border-top: 1px solid var(--border-subtle);
+}
+.mcp-audit li:first-child {
+  border-top: 0;
+}
+.mcp-audit__when,
+.mcp-audit__who {
+  color: var(--text-2);
+}
+.mcp-audit__tool {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mcp-audit__detail {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.mcp-audit li[data-ok="false"] .mcp-audit__detail {
+  color: var(--danger);
+}
+
+.mcp-empty-line {
+  font-size: var(--fs-sm);
+  margin: 8px 0 0;
+}
+
+@media (max-width: 720px) {
+  .mcp-audit li {
+    grid-template-columns: 74px 1fr;
+  }
+}

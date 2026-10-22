@@ -258,6 +258,20 @@ opt-in two-replica test against a running server (see KERNWEB's README).
     off also forgets what was already recorded.
   - **Allow plugin and syntax downloads** (`privacy.pluginDownloads`) gates
     `syntax_install` on top of the network switch.
+- **AI assistants** (`mcp.enabled`, off by default; Settings → API →
+  Assistants) are the one feature where data leaves through a *client* rather
+  than an outbound request, so the network switch does not cover it. While it
+  is on, an assistant you have approved by name — Claude Desktop, Claude Code
+  — reads and changes your work in its own process, and what it reads goes
+  wherever that program sends it. Kern never reaches out: the assistant
+  connects in, over a local pipe only your user account can open. Each client
+  is read-only until given write access, can be limited to chosen projects,
+  cannot see projects locked with a passkey, deletes only into Trash, and is
+  never offered linked-folder files, the terminal, environment variables,
+  tokens, cloud accounts or settings. Every call is recorded in `mcp_audit`
+  and shown in that tab. `domain/mcp/policy.rs` is the single gate, and
+  `cargo test mcp` walks the whole tool surface against a locked project.
+
 - Files that commonly hold secrets (`.env`, `*.pem`, `*.key`, `id_rsa`, anything
   named `credentials` or `secret` — `folders::is_sensitive`) are never offered to
   AI features, trusted folder or not. That isn't a setting.

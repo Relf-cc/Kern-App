@@ -1,0 +1,15 @@
+[package]
+name = "kern-mcp"
+version = "0.2.4"
+description = "Connects an AI assistant to a running copy of Kern"
+authors = ["Christian Relf"]
+edition = "2021"
+rust-version = "1.80"
+
+[[bin]]
+name = "kern-mcp"
+path = "src/main.rs"
+
+# Deliberately no dependencies: this runs inside someone else's process and
+# does nothing but copy bytes.
+[dependencies]

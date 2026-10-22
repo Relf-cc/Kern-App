@@ -34,7 +34,7 @@ export type SettingsSection =
   | "about";
 
 /** Sub-pages of Settings → API (the account manager lives at /api/accounts). */
-export type ApiTab = "accounts" | "routing" | "usage" | "security";
+export type ApiTab = "accounts" | "routing" | "usage" | "security" | "mcp";
 
 export type Route =
   | { name: "dashboard"; id?: string }
@@ -110,7 +110,7 @@ export const useRouter = create<RouterState>((set, get) => ({
 
 export const navigate = (r: Route, opts?: { replace?: boolean }) => useRouter.getState().navigate(r, opts);
 
-const API_TABS: ApiTab[] = ["accounts", "routing", "usage", "security"];
+const API_TABS: ApiTab[] = ["accounts", "routing", "usage", "security", "mcp"];
 
 /** Internal path for routes that have one (e.g. "/api/accounts"). */
 export function pathOf(r: Route): string | null {

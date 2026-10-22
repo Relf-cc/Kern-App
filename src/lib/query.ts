@@ -54,6 +54,7 @@ export type Domain =
   | "trusted"
   | "storage"
   | "ai"
+  | "mcp"
   | "favicon"
   | "git"
   | "github"

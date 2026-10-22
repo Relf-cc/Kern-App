@@ -6,7 +6,7 @@
 //! interrupted migration rolls back cleanly; additionally a full database
 //! copy is taken before migrating an existing database (see `db::open`).
 
-pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7, MIGRATION_8];
+pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7, MIGRATION_8, MIGRATION_9];
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE settings (
@@ -945,4 +945,37 @@ const MIGRATION_8: &str = r#"
 -- member who has since left. Offline both stay NULL.
 ALTER TABLE tasks ADD COLUMN created_by TEXT;
 ALTER TABLE tasks ADD COLUMN created_by_name TEXT;
+"#;
+
+const MIGRATION_9: &str = r#"
+-- An AI assistant (Claude Desktop, Claude Code) that has asked to connect
+-- over the local MCP pipe. Per computer: a connection is made by a program
+-- installed here, and approving one on this machine says nothing about
+-- another. Nothing connects until `status` is 'approved'.
+CREATE TABLE mcp_clients (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'revoked')),
+  scope TEXT NOT NULL DEFAULT 'read' CHECK (scope IN ('read', 'write')),
+  -- JSON array of project ids; empty means every project.
+  projects TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL,
+  approved_at INTEGER,
+  last_seen_at INTEGER
+);
+
+-- Every tool call an assistant made: what it was, what it touched and how it
+-- ended. Read by the Assistants tab and pruned on a schedule.
+CREATE TABLE mcp_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id TEXT NOT NULL,
+  client_name TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  -- A short, human description of the arguments: never the full payload.
+  detail TEXT,
+  ok INTEGER NOT NULL DEFAULT 1,
+  message TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_mcp_audit_created ON mcp_audit(created_at DESC);
 "#;

@@ -56,7 +56,7 @@ fn scope_kinds(scope: &str) -> Option<&'static [&'static str]> {
 }
 
 /// The project a hit belongs to, for the passkey gate below.
-fn owner_of(conn: &Connection, hit: &SearchHit) -> Option<String> {
+pub fn owner_of(conn: &Connection, hit: &SearchHit) -> Option<String> {
     let one = |sql: &str, id: &str| conn.query_row(sql, [id], |r| r.get::<_, Option<String>>(0)).optional().ok().flatten().flatten();
     match hit.kind.as_str() {
         "project" => Some(hit.id.clone()),
@@ -80,15 +80,16 @@ fn drop_locked(conn: &Connection, hits: &mut Vec<SearchHit>) {
     hits.retain(|hit| passkeys::ensure_readable_opt(conn, owner_of(conn, hit).as_deref()).is_ok());
 }
 
-#[tauri::command]
-pub fn search(state: State<AppState>, query: String, limit: Option<i64>, scope: Option<String>) -> AppResult<Vec<SearchHit>> {
+/// The search itself, on a connection. The command below and the assistant
+/// tools (`domain::mcp`) both come through here.
+pub fn run(c: &Connection, query: &str, limit: Option<i64>, scope: Option<&str>) -> AppResult<Vec<SearchHit>> {
     let limit = limit.unwrap_or(30).clamp(1, 200);
-    let Some(fts) = to_fts_query(&query) else { return Ok(vec![]) };
+    let Some(fts) = to_fts_query(query) else { return Ok(vec![]) };
     let like = format!("%{}%", query.trim().replace('%', "").replace('_', ""));
-    let scope = scope.unwrap_or_else(|| "all".into());
-    let kinds = scope_kinds(&scope);
+    let scope = scope.unwrap_or("all");
+    let kinds = scope_kinds(scope);
     let all = kinds.is_none();
-    state.with(|c| {
+    {
         let mut out = vec![];
         let mut stmt = c.prepare(
             "SELECT kind, ref_id, parent_id, title, snippet(search_fts, 4, '', '', '…', 12)
@@ -192,7 +193,12 @@ pub fn search(state: State<AppState>, query: String, limit: Option<i64>, scope: 
         }
         drop_locked(c, &mut out);
         Ok(out)
-    })
+    }
+}
+
+#[tauri::command]
+pub fn search(state: State<AppState>, query: String, limit: Option<i64>, scope: Option<String>) -> AppResult<Vec<SearchHit>> {
+    state.with(|c| run(c, &query, limit, scope.as_deref()))
 }
 
 #[cfg(test)]

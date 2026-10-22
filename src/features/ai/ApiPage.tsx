@@ -7,18 +7,20 @@
 // credential profiles, routing and failover, usage, and security. This is
 // an account manager for integrations, not a chat interface.
 
-import { BarChart3, KeyRound, Route as RouteIcon, ShieldCheck } from "lucide-react";
+import { BarChart3, Bot, KeyRound, Route as RouteIcon, ShieldCheck } from "lucide-react";
 import { navigate, type ApiTab } from "@/stores/router";
 import { AccountsTab } from "./AccountsTab";
 import { RoutingTab } from "./RoutingTab";
 import { UsageTab } from "./UsageTab";
 import { SecurityTab } from "./SecurityTab";
+import { McpTab } from "./McpTab";
 
 const TABS: { id: ApiTab; label: string; icon: typeof KeyRound }[] = [
   { id: "accounts", label: "Accounts", icon: KeyRound },
   { id: "routing", label: "Routing", icon: RouteIcon },
   { id: "usage", label: "Usage", icon: BarChart3 },
   { id: "security", label: "Security", icon: ShieldCheck },
+  { id: "mcp", label: "Assistants", icon: Bot },
 ];
 
 export default function ApiPage({ tab = "accounts" }: { tab?: ApiTab }) {
@@ -36,6 +38,7 @@ export default function ApiPage({ tab = "accounts" }: { tab?: ApiTab }) {
       {tab === "routing" && <RoutingTab />}
       {tab === "usage" && <UsageTab />}
       {tab === "security" && <SecurityTab />}
+      {tab === "mcp" && <McpTab />}
     </div>
   );
 }

@@ -53,7 +53,12 @@ pub fn activity_list(
     limit: Option<i64>,
     before: Option<i64>,
 ) -> AppResult<Vec<Activity>> {
-    state.with(|c| {
+    state.with(|c| list(c, project_id.as_deref(), limit, before))
+}
+
+/// The feed on a connection, for the command above and the assistant tools.
+pub fn list(c: &Connection, project_id: Option<&str>, limit: Option<i64>, before: Option<i64>) -> AppResult<Vec<Activity>> {
+    {
         let limit = limit.unwrap_or(50).clamp(1, 500);
         let before = before.unwrap_or(i64::MAX);
         let mut stmt = c.prepare(&format!(
@@ -74,5 +79,5 @@ pub fn activity_list(
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
-    })
+    }
 }

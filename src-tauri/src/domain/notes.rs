@@ -167,9 +167,15 @@ pub struct NotePatch {
 
 #[tauri::command]
 pub fn note_update(state: State<AppState>, id: String, patch: NotePatch) -> AppResult<Note> {
-    state.with(|c| {
+    state.with(|c| update_note(c, &id, &patch))
+}
+
+/// Applies a patch on a connection, for the command above and the assistant
+/// tools (`domain::mcp`).
+pub fn update_note(c: &mut Connection, id: &str, patch: &NotePatch) -> AppResult<Note> {
+    {
         let tx = c.transaction()?;
-        let prev = get_note(&tx, &id)?;
+        let prev = get_note(&tx, id)?;
         let now = now_ms();
         if let Some(t) = &patch.title {
             tx.execute("UPDATE notes SET title = ?1, updated_at = ?2 WHERE id = ?3", params![t, now, id])?;
@@ -187,10 +193,10 @@ pub fn note_update(state: State<AppState>, id: String, patch: NotePatch) -> AppR
             let v = if a { Some(prev.archived_at.unwrap_or(now)) } else { None };
             tx.execute("UPDATE notes SET archived_at = ?1 WHERE id = ?2", params![v, id])?;
         }
-        let n = get_note(&tx, &id)?;
+        let n = get_note(&tx, id)?;
         tx.commit()?;
         Ok(n)
-    })
+    }
 }
 
 /// A note that links to something (`kern://<kind>/<id>` in its Markdown),

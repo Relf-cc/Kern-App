@@ -63,6 +63,8 @@ pub struct AppState {
     pub pty: crate::domain::pty::PtyManager,
     /// Kern Cloud: the active space, sync signals and status.
     pub cloud: crate::domain::cloud::CloudState,
+    /// The assistant (MCP) listener, while it is running.
+    pub mcp: crate::domain::mcp::McpState,
 }
 
 impl AppState {
@@ -76,6 +78,7 @@ impl AppState {
             ai: crate::domain::ai::default_service(),
             pty: Default::default(),
             cloud: Default::default(),
+            mcp: Default::default(),
         }
     }
 

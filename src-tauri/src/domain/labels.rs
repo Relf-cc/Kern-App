@@ -19,7 +19,13 @@ pub struct Label {
 
 #[tauri::command]
 pub fn labels_list(state: State<AppState>) -> AppResult<Vec<Label>> {
-    state.with(|c| {
+    state.with(|c| list(c))
+}
+
+/// Every label with its open-task count, for the command above and the
+/// assistant tools.
+pub fn list(c: &Connection) -> AppResult<Vec<Label>> {
+    {
         let mut stmt = c.prepare(
             "SELECT l.id, l.name, l.color,
                (SELECT count(*) FROM task_labels tl JOIN tasks t ON t.id = tl.task_id
@@ -30,7 +36,7 @@ pub fn labels_list(state: State<AppState>) -> AppResult<Vec<Label>> {
             Ok(Label { id: r.get(0)?, name: r.get(1)?, color: r.get(2)?, task_count: r.get(3)? })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
-    })
+    }
 }
 
 /// The id of the label called `name` (case-insensitive), created if needed.

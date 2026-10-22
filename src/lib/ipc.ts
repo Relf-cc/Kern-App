@@ -194,6 +194,23 @@ export const api = {
     clearHistory: () => call<void>("ai_history_clear"),
     security: () => call<T.AiSecurityReport>("ai_security_check"),
   },
+  /**
+   * Assistants: AI clients (Claude Desktop, Claude Code) that connect to Kern
+   * over a local pipe and work through a curated set of tools.
+   */
+  mcp: {
+    status: () => call<T.McpStatus>("mcp_status"),
+    /** Brings the listener in line with `mcp.enabled`. */
+    sync: () => call<T.McpStatus>("mcp_sync"),
+    clients: () => call<T.McpClient[]>("mcp_clients_list"),
+    updateClient: (id: string, patch: { status?: T.McpClientStatus; scope?: T.McpScope; projects?: string[] }) =>
+      call<T.McpClient>("mcp_client_update", { id, status: patch.status ?? null, scope: patch.scope ?? null, projects: patch.projects ?? null }),
+    removeClient: (id: string) => call<void>("mcp_client_remove", { id }),
+    audit: (limit?: number) => call<T.McpAuditEntry[]>("mcp_audit_list", { limit: limit ?? null }),
+    setup: () => call<T.McpSetup>("mcp_setup_info"),
+    /** Adds Kern to `claude_desktop_config.json`; returns the file it wrote. */
+    setupClaudeDesktop: () => call<string>("mcp_setup_claude_desktop"),
+  },
   /** Git commands act on one linked repository (see `repos`). */
   git: {
     available: () => call<string | null>("git_available"),

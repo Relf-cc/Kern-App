@@ -929,6 +929,55 @@ export interface AiSecurityReport {
   missing: string[];
 }
 
+// ------------------------------------------------------------ assistants (MCP)
+
+export type McpClientStatus = "pending" | "approved" | "revoked";
+export type McpScope = "read" | "write";
+
+/** An AI assistant that has asked to connect over Kern's local MCP pipe. */
+export interface McpClient {
+  id: string;
+  name: string;
+  status: McpClientStatus;
+  scope: McpScope;
+  /** Project ids this assistant may see; empty means all of them. */
+  projects: string[];
+  createdAt: number;
+  approvedAt: number | null;
+  lastSeenAt: number | null;
+}
+
+export interface McpStatus {
+  enabled: boolean;
+  /** Whether the local listener is up right now. */
+  running: boolean;
+  endpoint: string;
+  clients: McpClient[];
+}
+
+export interface McpAuditEntry {
+  id: number;
+  clientId: string;
+  clientName: string;
+  tool: string;
+  /** A short description of the arguments, never the payload itself. */
+  detail: string | null;
+  ok: boolean;
+  message: string | null;
+  createdAt: number;
+}
+
+export interface McpSetup {
+  /** The `claude_desktop_config.json` fragment, pretty-printed. */
+  claudeDesktop: string;
+  claudeDesktopPath: string | null;
+  /** The one-line command for Claude Code. */
+  claudeCode: string;
+  bridgePath: string;
+  bridgeExists: boolean;
+  endpoint: string;
+}
+
 export interface Favicon {
   origin: string;
   /** Absolute path of the locally cached icon. */

@@ -224,6 +224,13 @@ export interface Settings {
   "ai.notifySwitch": boolean;
   "ai.usageRetentionDays": number;
   "ai.modelPrices": Record<string, ModelPrice>;
+  // Assistants (MCP): AI clients that connect to Kern over a local pipe
+  /** Off by default. Nothing listens until this is on. Read by the backend. */
+  "mcp.enabled": boolean;
+  /** Tool calls one assistant may make in a minute; 0 means no limit. Read by the backend. */
+  "mcp.maxCallsPerMinute": number;
+  /** Days of assistant activity to keep. Read by the backend. */
+  "mcp.auditDays": number;
   // GitHub
   "github.auth": "auto" | "cli" | "token";
   "github.autoSync": boolean;
@@ -431,6 +438,10 @@ export const DEFAULTS: Settings = {
   "ai.notifySwitch": true,
   "ai.usageRetentionDays": 90,
   "ai.modelPrices": {},
+
+  "mcp.enabled": false,
+  "mcp.maxCallsPerMinute": 120,
+  "mcp.auditDays": 30,
 
   "github.auth": "auto",
   "github.autoSync": true,

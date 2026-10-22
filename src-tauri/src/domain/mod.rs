@@ -28,6 +28,7 @@ pub mod github;
 pub mod health;
 pub mod folders;
 pub mod labels;
+pub mod mcp;
 pub mod milestones;
 pub mod links;
 pub mod notes;

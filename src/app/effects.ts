@@ -15,7 +15,7 @@ import { useUi } from "@/stores/ui";
 import { navigate, useRouter } from "@/stores/router";
 import { useUndo } from "@/stores/undo";
 import { api, isTauri } from "@/lib/ipc";
-import { queryClient } from "@/lib/query";
+import { invalidate, invalidateTasks, queryClient } from "@/lib/query";
 import { comboFromEvent, isTextInput, resolveBindings } from "@/lib/shortcuts";
 import { todayStr } from "@/lib/dates";
 import { useFocus } from "@/features/focus/store";
@@ -167,6 +167,21 @@ async function maybePromptBriefing() {
   else useUi.getState().set({ briefingPrompt: "morning" });
 }
 
+/**
+ * What an assistant's write is called in the toast. The audit detail is a
+ * count for the batch tools ("6 tasks") and an id otherwise, so only the
+ * counted ones put it in the sentence.
+ */
+const MCP_WROTE: Record<string, (detail: string) => string> = {
+  kern_task_create: (d) => `created ${d}`,
+  kern_task_update: () => "changed a task",
+  kern_task_complete: (d) => `completed ${d}`,
+  kern_task_delete: (d) => `moved ${d} to Trash`,
+  kern_note_create: () => "wrote a note",
+  kern_note_update: () => "changed a note",
+  kern_board_create: () => "created a board",
+};
+
 /** Listens for backend events and handles the morning/evening prompts. */
 export function useBackendEvents() {
   const loaded = useSettings((s) => s.loaded);
@@ -204,6 +219,21 @@ export function useBackendEvents() {
       }),
       listen<string>("kern://tray-completed", (e) => toast(`Completed “${e.payload}”`)),
       listen("kern://calendar-updated", () => void queryClient.invalidateQueries({ queryKey: ["calendar"] })),
+      // An assistant (MCP) changed something: the same shape as cloud's
+      // applied event - refresh everything it could have touched, and say so.
+      listen<{ client: string; tool: string; detail: string }>("kern://mcp-applied", (e) => {
+        invalidateTasks();
+        invalidate("notes", "note", "boards", "mcp");
+        const wrote = MCP_WROTE[e.payload.tool]?.(e.payload.detail) ?? "changed something";
+        toast(`${e.payload.client} ${wrote}`);
+      }),
+      listen<{ id: string; name: string }>("kern://mcp-pending", (e) => {
+        toast(`${e.payload.name} wants to connect to Kern`, {
+          action: { label: "Review", run: () => navigate({ name: "api", tab: "mcp" }) },
+          duration: 12_000,
+        });
+      }),
+      listen("kern://mcp-state", () => invalidate("mcp")),
       listen<{ from: string; to: string; reason: string }>("kern://ai-switch", (e) => {
         if (!useSettings.getState().values["ai.notifySwitch"]) return;
         const msg = `Switched to ${e.payload.to} - ${e.payload.from} unavailable (${e.payload.reason}).`;

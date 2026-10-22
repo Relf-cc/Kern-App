@@ -108,6 +108,8 @@ pub fn run() {
             // Reopen the cloud space that was open last time (works offline too).
             cloud::restore_active(app.handle());
             cloud::start_worker(app.handle().clone());
+            // Listens only when the assistant connection is switched on.
+            mcp::sync(app.handle());
             // kern://invite/<id> links. Installers register the scheme; this
             // also covers development runs and portable copies.
             let _ = app.deep_link().register_all();
@@ -232,6 +234,15 @@ pub fn run() {
             ai::ai_usage,
             ai::ai_history_clear,
             ai::ai_security_check,
+            // assistants (MCP)
+            mcp::mcp_status,
+            mcp::mcp_sync,
+            mcp::mcp_clients_list,
+            mcp::mcp_client_update,
+            mcp::mcp_client_remove,
+            mcp::mcp_audit_list,
+            mcp::mcp_setup_info,
+            mcp::mcp_setup_claude_desktop,
             // git & GitHub (repository-scoped)
             git::git_remote,
             git::git_status,

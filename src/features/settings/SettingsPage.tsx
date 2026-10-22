@@ -921,6 +921,16 @@ function useSections(apiTab?: ApiTab): Record<SettingsSection, GroupDef[] | Reac
             keywords: "plugins syntax grammars download network",
             control: <SToggle k="privacy.pluginDownloads" />,
           },
+          {
+            label: "AI assistants",
+            hint: "Off by default. An assistant you approve - Claude Desktop, Claude Code - reads and changes your work through its own program, so anything it reads leaves this computer with it. Kern never reaches out to it.",
+            keywords: "mcp model context protocol claude desktop claude code assistant connector tools pipe",
+            control: (
+              <Button size="sm" onClick={() => navigate({ name: "api", tab: "mcp" })}>
+                Assistants…
+              </Button>
+            ),
+          },
           { label: "Secrets", hint: "API keys and tokens live in the OS credential store, never in the database, logs or backups.", keywords: "keys tokens keychain credential manager", control: <span className="faint" style={{ fontSize: "var(--fs-sm)" }}>OS credential store</span> },
         ],
       },

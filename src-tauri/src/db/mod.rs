@@ -61,6 +61,9 @@ pub const DEVICE_TABLES: &[&str] = &[
     "calendar_events",
     // Credentials are bound to this computer's authenticator.
     "passkeys",
+    // An assistant approved here is approved on this computer only.
+    "mcp_clients",
+    "mcp_audit",
 ];
 const PARKED: &str = "_device_";
 

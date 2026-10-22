@@ -4,7 +4,14 @@ version = "0.2.4"
 description = "Kern - a local-first personal productivity workspace"
 authors = ["Christian Relf"]
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.88"
+
+# The MCP bridge is its own crate: it ships beside the app and must not drag
+# the app's dependencies into a program that only copies bytes.
+[workspace]
+members = ["mcp-bridge"]
+# Both are built together: the bridge has to sit beside the app binary.
+default-members = [".", "mcp-bridge"]
 
 [lib]
 name = "kern_lib"
@@ -42,6 +49,10 @@ url = "2"
 portable-pty = "0.9"
 # Reading Cargo.toml / pyproject.toml / lockfiles for detection and the dependency explorer.
 toml = "0.8"
+# Model Context Protocol: AI assistants (Claude Desktop, Claude Code) connect
+# over a local pipe and create tasks, notes, boards and projects.
+rmcp = { version = "3.6", default-features = false, features = ["server", "macros", "schemars", "transport-async-rw"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 
