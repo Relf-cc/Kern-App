@@ -441,7 +441,13 @@ fn push(app: &AppHandle, space: &str) -> Result<bool, Stop> {
             }
             last_sent = Some(sent);
             set_status(app, |s| s.state = "syncing".into());
-            match authed(app, "POST", &format!("/spaces/{space}/sync/push"), Some(&json!({ "conn": conn_id, "changes": batch.changes }))) {
+            // `conn` is left out rather than sent as null when the socket
+            // is down: the server wants a string whenever the field is there.
+            let mut body = json!({ "changes": batch.changes });
+            if let Some(id) = &conn_id {
+                body["conn"] = json!(id);
+            }
+            match authed(app, "POST", &format!("/spaces/{space}/sync/push"), Some(&body)) {
                 Ok(v) => serde_json::from_value(v).map_err(AppError::from)?,
                 Err(AppError::Invalid(m)) if m.contains("read-only") => {
                     // Viewers can't change anything: restore the server's copy.
