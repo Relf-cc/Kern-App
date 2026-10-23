@@ -52,18 +52,18 @@ pub fn allowed_projects(conn: &Connection) -> Vec<String> {
 pub fn guard(conn: &Connection, client: &McpClient, access: Access) -> AppResult<()> {
     if !enabled(conn) {
         return Err(AppError::Invalid(
-            "Kern's assistant connection is turned off. Turn it on in Kern under Settings → API → Assistants.".into(),
+            "Kern's assistant connection is turned off. Turn it on in Kern under Settings → Assistants.".into(),
         ));
     }
     if client.status != APPROVED {
         return Err(AppError::Invalid(format!(
-            "'{}' hasn't been approved in Kern yet. Approve it under Settings → API → Assistants.",
+            "'{}' hasn't been approved in Kern yet. Approve it under Settings → Assistants.",
             client.name
         )));
     }
     if access == Access::Write && !client.may_write() {
         return Err(AppError::Invalid(format!(
-            "'{}' has read-only access to Kern. Give it write access under Settings → API → Assistants to make changes.",
+            "'{}' has read-only access to Kern. Give it write access under Settings → Assistants to make changes.",
             client.name
         )));
     }
@@ -97,13 +97,13 @@ pub fn ensure_project(conn: &Connection, client: &McpClient, project_id: Option<
 pub fn ensure_may_create_project(conn: &Connection, client: &McpClient) -> AppResult<()> {
     if !client.projects.is_empty() {
         return Err(AppError::Invalid(format!(
-            "'{}' can only work in a chosen set of projects, so it can't create a new one. That's changed in Kern under Settings → API → Assistants.",
+            "'{}' can only work in a chosen set of projects, so it can't create a new one. That's changed in Kern under Settings → Assistants.",
             client.name
         )));
     }
     if !allowed_projects(conn).is_empty() {
         return Err(AppError::Invalid(
-            "Assistants are limited to a chosen set of projects in Kern, so a new one can't be created. That's changed under Settings → API → Assistants."
+            "Assistants are limited to a chosen set of projects in Kern, so a new one can't be created. That's changed under Settings → Assistants."
                 .into(),
         ));
     }

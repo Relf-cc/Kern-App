@@ -965,7 +965,7 @@ CREATE TABLE mcp_clients (
 );
 
 -- Every tool call an assistant made: what it was, what it touched and how it
--- ended. Read by the Assistants tab and pruned on a schedule.
+-- ended. Read by Settings → Assistants and pruned on a schedule.
 CREATE TABLE mcp_audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   client_id TEXT NOT NULL,

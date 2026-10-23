@@ -4,7 +4,7 @@
  */
 
 import { Checkbox as RCheckbox, Select as RSelect, Slider as RSlider, Switch as RSwitch, Popover as RPopover } from "radix-ui";
-import { Check, ChevronDown, Minus, type LucideIcon } from "lucide-react";
+import { Check, ChevronDown, Copy, Minus, type LucideIcon } from "lucide-react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement, ReactNode } from "react";
 import { Tooltip } from "./Tooltip";
 
@@ -171,6 +171,64 @@ export function Segmented<T extends string>({
           </Tooltip>
         ) : (
           btn
+        );
+      })}
+    </div>
+  );
+}
+
+export interface RadioCardOption<T extends string> {
+  value: T;
+  title: string;
+  text?: ReactNode;
+  icon?: LucideIcon;
+  /** A short tag beside the title ("Recommended", "Needs Node.js"). */
+  badge?: string;
+  disabled?: boolean;
+}
+
+/**
+ * A choice that needs a sentence to explain each option: a policy, which app
+ * to connect, what kind of server. A Segmented control is for choices whose
+ * labels say it all.
+ */
+export function RadioCards<T extends string>({
+  value,
+  onChange,
+  options,
+  ariaLabel,
+  columns,
+}: {
+  value: T | null;
+  onChange: (v: T) => void;
+  options: RadioCardOption<T>[];
+  ariaLabel: string;
+  /** Fixed columns; otherwise as many as fit at 200px. */
+  columns?: number;
+}) {
+  return (
+    <div className="radio-cards" role="radiogroup" aria-label={ariaLabel} style={columns ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}>
+      {options.map((o) => {
+        const Icon = o.icon;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={value === o.value}
+            className="radio-card"
+            data-active={value === o.value || undefined}
+            disabled={o.disabled}
+            onClick={() => onChange(o.value)}
+          >
+            <span className="radio-card__head">
+              <span className="radio-card__radio" aria-hidden />
+              {Icon && <Icon size={14} strokeWidth={1.75} className="radio-card__icon" />}
+              <b className="radio-card__title">{o.title}</b>
+              {o.badge && <span className="chip">{o.badge}</span>}
+            </span>
+            {o.text && <span className="radio-card__text">{o.text}</span>}
+          </button>
         );
       })}
     </div>
@@ -357,4 +415,55 @@ export function EmptyState({
 
 export function Skeleton({ width, height = 12, style }: { width?: number | string; height?: number; style?: CSSProperties }) {
   return <div className="skeleton" style={{ width, height, ...style }} />;
+}
+
+/**
+ * The outcome of a test, or a warning that has to be read before going on.
+ * A toast is for something that already happened; this stays put beside the
+ * thing it is about.
+ */
+export function Callout({
+  icon: Icon,
+  tone = "neutral",
+  title,
+  children,
+  action,
+}: {
+  icon?: LucideIcon;
+  tone?: "neutral" | "ok" | "warn" | "danger";
+  title?: ReactNode;
+  children?: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="callout" data-tone={tone} role={tone === "neutral" ? undefined : "status"}>
+      {Icon && <Icon size={15} strokeWidth={1.75} />}
+      <div className="callout__body grow">
+        {title && <span className="callout__title">{title}</span>}
+        {children && <span className="callout__text">{children}</span>}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+/** A command or config fragment the person copies into another program. */
+export function CopyBlock({ text, label, onCopy }: { text: string; label: string; onCopy?: () => void }) {
+  return (
+    <div className="copy-block">
+      <pre className="copy-block__text" aria-label={label}>
+        {text}
+      </pre>
+      <Tooltip content="Copy">
+        <button
+          type="button"
+          className="icon-btn icon-btn--sm"
+          aria-label={`Copy ${label.toLowerCase()}`}
+          onClick={() => void navigator.clipboard.writeText(text).then(onCopy)}
+        >
+          <Copy strokeWidth={1.75} />
+        </button>
+      </Tooltip>
+    </div>
+  );
 }

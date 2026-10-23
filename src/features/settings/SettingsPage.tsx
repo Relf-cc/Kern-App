@@ -34,13 +34,14 @@ import {
   CalendarDays,
   LayoutTemplate,
   Upload,
+  Bot,
 } from "lucide-react";
 import { useCalendarGroups } from "@/features/calendar/CalendarSettings";
 import { templateGroups } from "@/features/templates/TemplatesSettings";
 import { ImportDialog } from "@/features/import/ImportDialog";
 import { CloudSection } from "@/features/cloud/CloudSection";
 import { IntegrationsSection } from "@/features/github/IntegrationsSection";
-import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
+import { Fragment, lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { navigate, type ApiTab, type SettingsSection } from "@/stores/router";
 import { useSetting, setSetting, useSettings, getSetting } from "@/stores/settings";
@@ -72,6 +73,7 @@ import { switchMode } from "@/app/mode";
 import { AboutSection } from "./AboutSection";
 import { PluginsSection } from "@/features/plugins/PluginsSection";
 import { developerGroups } from "./DeveloperSection";
+import { useAssistantGroups } from "@/features/ai/AssistantsSection";
 import { LabelColorPicker } from "@/features/tasks/labels";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: typeof Settings }[] = [
@@ -91,6 +93,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: typeof Settings }[] 
   { id: "data", label: "Data & Storage", icon: Database },
   { id: "privacy", label: "Privacy & Security", icon: Shield },
   { id: "api", label: "API", icon: KeyRound },
+  { id: "assistants", label: "Assistants", icon: Bot },
   { id: "integrations", label: "Integrations", icon: Blocks },
   { id: "plugins", label: "Plugins", icon: Puzzle },
   { id: "developer", label: "Developer Tools", icon: SquareTerminal },
@@ -390,13 +393,22 @@ async function resetProjectOrder() {
 
 // ------------------------------------------------------------ sections
 
-function useSections(apiTab?: ApiTab): Record<SettingsSection, GroupDef[] | ReactNode> {
+/** The pages under API, listed beneath it in the rail while it's open. */
+const API_TABS: { id: ApiTab; label: string }[] = [
+  { id: "accounts", label: "Accounts" },
+  { id: "routing", label: "Routing" },
+  { id: "usage", label: "Usage" },
+  { id: "security", label: "Security" },
+];
+
+function useSections(section: SettingsSection, apiTab?: ApiTab): Record<SettingsSection, GroupDef[] | ReactNode> {
   const data = [
     { title: "Import", rows: [{ label: "Import from another app", hint: "Projects and tasks from Todoist, Trello, Linear, Notion or any CSV.", keywords: "todoist trello linear notion csv migrate switch", control: <ImportButton /> }] },
     ...useStorageGroups(),
     ...useDataGroups(),
   ];
   const calendars = useCalendarGroups();
+  const assistants = useAssistantGroups(section === "assistants");
   const { data: dashboards } = useDashboards();
   const notificationsOn = useSetting("notifications.enabled");
   const quiet = useSetting("notifications.quietHours");
@@ -923,10 +935,10 @@ function useSections(apiTab?: ApiTab): Record<SettingsSection, GroupDef[] | Reac
           },
           {
             label: "AI assistants",
-            hint: "Off by default. An assistant you approve - Claude Desktop, Claude Code - reads and changes your work through its own program, so anything it reads leaves this computer with it. Kern never reaches out to it. You can be asked before anything is written, hold assistants to chosen projects, and put any one change back. The same page adds a local HTTP address for assistants that take a URL, and - the other way round - MCP servers of your own that Kern's AI features may call.",
-            keywords: "mcp model context protocol claude desktop claude code assistant connector tools pipe confirm approve writes allowed projects revert undo batch audit activity mcpb extension http port token bearer localhost endpoint url servers external tool calls subscription claude cli",
+            hint: "Off by default. Anything an assistant you approve reads leaves this computer through its own app - Kern never reaches out to it. Approve, limit and review assistants under Assistants.",
+            keywords: "mcp model context protocol claude desktop claude code assistant connector",
             control: (
-              <Button size="sm" onClick={() => navigate({ name: "api", tab: "mcp" })}>
+              <Button size="sm" onClick={() => navigate({ name: "settings", section: "assistants" })}>
                 Assistants…
               </Button>
             ),
@@ -958,6 +970,7 @@ function useSections(apiTab?: ApiTab): Record<SettingsSection, GroupDef[] | Reac
       },
     ],
     about: <AboutSection />,
+    assistants,
     calendars,
     templates: templateGroups(),
   };
@@ -969,7 +982,7 @@ function Group({ g, highlight }: { g: GroupDef; highlight?: string }) {
       {g.title && <div className="set-group__title">{g.title}</div>}
       <div className="set-group">
         {g.rows.map((r) => (
-          <Row key={r.label} r={r} highlight={!!highlight} />
+          <Row key={r.id ?? r.label} r={r} highlight={!!highlight} />
         ))}
       </div>
     </div>
@@ -990,7 +1003,7 @@ function Row({ r, highlight }: { r: RowDef; highlight: boolean }) {
 }
 
 export default function SettingsPage({ section = "general", apiTab }: { section?: SettingsSection; apiTab?: ApiTab }) {
-  const sections = useSections(apiTab);
+  const sections = useSections(section, apiTab);
   const [q, setQ] = useState("");
   const matches = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -1028,19 +1041,37 @@ export default function SettingsPage({ section = "general", apiTab }: { section?
             <input className="input" style={{ height: "var(--control-h-sm)" }} placeholder="Search settings" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search settings" />
           </div>
           {SECTIONS.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              className="nav-item"
-              data-active={!matches && s.id === section ? true : undefined}
-              onClick={() => {
-                setQ("");
-                navigate(s.id === "api" ? { name: "api", tab: "accounts" } : { name: "settings", section: s.id }, { replace: true });
-              }}
-            >
-              <s.icon strokeWidth={1.75} />
-              <span className="nav-item__label">{s.label}</span>
-            </button>
+            <Fragment key={s.id}>
+              <button
+                type="button"
+                className="nav-item"
+                data-active={!matches && s.id === section && s.id !== "api" ? true : undefined}
+                aria-expanded={s.id === "api" ? section === "api" : undefined}
+                onClick={() => {
+                  setQ("");
+                  navigate(s.id === "api" ? { name: "api", tab: "accounts" } : { name: "settings", section: s.id }, { replace: true });
+                }}
+              >
+                <s.icon strokeWidth={1.75} />
+                <span className="nav-item__label">{s.label}</span>
+              </button>
+              {s.id === "api" &&
+                section === "api" &&
+                API_TABS.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className="nav-item nav-item--sub"
+                    data-active={!matches && (apiTab ?? "accounts") === t.id ? true : undefined}
+                    onClick={() => {
+                      setQ("");
+                      navigate({ name: "api", tab: t.id }, { replace: true });
+                    }}
+                  >
+                    <span className="nav-item__label">{t.label}</span>
+                  </button>
+                ))}
+            </Fragment>
           ))}
         </nav>
         <div className="settings__body">
@@ -1062,7 +1093,9 @@ export default function SettingsPage({ section = "general", apiTab }: { section?
               )
             ) : (
               <>
-                <h2 className="settings__heading">{meta.label}</h2>
+                <h2 className="settings__heading">
+                  {section === "api" ? `${meta.label} · ${API_TABS.find((t) => t.id === (apiTab ?? "accounts"))?.label}` : meta.label}
+                </h2>
                 {Array.isArray(current) ? (current as GroupDef[]).map((g, i) => <Group key={i} g={g} />) : current}
               </>
             )}

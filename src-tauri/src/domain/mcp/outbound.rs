@@ -17,7 +17,7 @@
 //! - each server has an `enabled` switch of its own, also off when added.
 //!
 //! A server's `command` runs as the user, with whatever that gives it. Kern
-//! cannot make that safe and does not pretend to: the Assistants tab says so
+//! cannot make that safe and does not pretend to: Settings → Assistants says so
 //! plainly, and the list is the user's own, typed in by them. What Kern does
 //! do is keep the arrangement honest — a tool is only offered when both
 //! switches are on, every call is written down in `mcp_tool_calls` with how
@@ -499,7 +499,7 @@ async fn session(app: &AppHandle, server: &Server) -> AppResult<Arc<Session>> {
 }
 
 /// What a server offers, asked of it directly. Used by **Test** in the
-/// Assistants tab, and saved so the model can be told about the tools
+/// Assistants settings, and saved so the model can be told about the tools
 /// without the server being started first.
 pub async fn probe(app: AppHandle, id: String) -> AppResult<Server> {
     let server = with_db(&app, {
@@ -763,7 +763,7 @@ pub fn mcp_servers_disconnect(app: AppHandle) -> AppResult<()> {
 }
 
 /// What the model would be told it can do — the catalogue as it stands, for
-/// the Assistants tab to show rather than describe.
+/// Settings → Assistants to show rather than describe.
 #[tauri::command]
 pub fn mcp_tool_catalog(state: State<AppState>) -> AppResult<Value> {
     state.with(|c| {

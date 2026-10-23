@@ -581,7 +581,7 @@ pub fn find_note(conn: &Connection, client: &McpClient, needle: &str) -> AppResu
 /// A write's answer, and what it would take to put it back.
 ///
 /// Every write tool returns one. `server.rs` stores the `undo` half with the
-/// call's audit row, and **Revert this batch** in the Assistants tab replays
+/// call's audit row, and **Revert this batch** in Settings → Assistants replays
 /// it. An empty plan means the call can't be put back, and the tab says so
 /// rather than offering a button that does nothing.
 #[derive(Debug)]
@@ -1901,7 +1901,7 @@ mod tests {
         assert!(task_move(c, &cl, &TaskMoveArgs { ids: vec![t], board: Some("Build".into()), ..Default::default() }).is_err());
     }
 
-    /// The other half of every write: what the Assistants tab replays when
+    /// The other half of every write: what Settings → Assistants replays when
     /// someone presses **Revert this batch**.
     #[test]
     fn a_batch_goes_back_the_way_it_came() {

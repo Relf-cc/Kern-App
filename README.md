@@ -137,7 +137,7 @@ linked the folder.
   there's no port and nothing on the network. Each assistant is read-only until
   you say otherwise, can be held to the projects you pick, never sees projects
   locked with a passkey, and is never offered your files, terminal, keys or
-  settings. Every call it makes is listed in **Settings → API → Assistants**.
+  settings. Every call it makes is listed in **Settings → Assistants**.
 - **The local web address is a separate switch**, also off by default. When you
   turn it on, Kern listens on this computer only — never on your network — and a
   request has to carry a token kept in your system's secure storage. A page in a

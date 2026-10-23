@@ -3,9 +3,9 @@
  * @Date 2026-10-22
  */
 
-/* Settings → API → Assistants. The status pill, the activity list and the
-   "wants to change something" dialog; the rest of the tab uses the shared
-   settings rows. */
+/* Settings → Assistants and its dialogs. The section itself is shared
+   settings rows; what's here is the status pill, the activity list, and the
+   pieces the dialogs are made of. */
 
 .mcp-status {
   display: inline-flex;
@@ -37,14 +37,230 @@
   background: var(--danger);
 }
 
-.mcp-command {
+.mcp-problem {
+  color: var(--danger);
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
-  user-select: all;
 }
 
+/* A label, then its controls, on one line inside a dialog field. */
+.mcp-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--control-h);
+  font-size: var(--fs-sm);
+  min-width: 0;
+}
+.mcp-secret {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.02em;
+}
+
+/* Who an assistant dialog is about. */
+.mcp-who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.mcp-who__meta {
+  font-size: var(--fs-xs);
+}
+
+/* Plain statements, one per line - what a feature does and doesn't do. */
+.mcp-facts {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.mcp-promises {
+  list-style: none;
+  margin: 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--divider);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.mcp-promises li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.mcp-promises svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* The connect flow's last step. */
+.mcp-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 28px 16px;
+  font-size: var(--fs-sm);
+}
+.mcp-waiting__icon {
+  color: var(--text-3);
+  margin-bottom: 4px;
+}
+.mcp-waiting__later {
+  margin-top: 8px;
+  font-size: var(--fs-xs);
+}
+.mcp-arrived {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mcp-try {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+/* Project picker. */
+.mcp-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mcp-pick__list {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  padding: 4px;
+}
+.mcp-pick__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--row-h);
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+}
+.mcp-pick__row:hover {
+  background: var(--hover);
+}
+.mcp-pick__row[data-off="true"] {
+  color: var(--text-3);
+}
+.mcp-pick__note,
+.mcp-pick__count,
+.mcp-pick__empty {
+  font-size: var(--fs-xs);
+}
+.mcp-pick__empty {
+  padding: 8px;
+}
+
+/* Server form. */
+.mcp-folders {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mcp-folders li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 2px 8px;
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  font-size: var(--fs-xs);
+}
+.mcp-env {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mcp-env .input:first-child {
+  width: 160px;
+  flex-shrink: 0;
+}
+.mcp-disclosure {
+  border-top: 1px solid var(--divider);
+  padding-top: 10px;
+}
+.mcp-disclosure__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+.mcp-disclosure__chev {
+  color: var(--text-3);
+  flex-shrink: 0;
+  transition: transform var(--t-hover) var(--ease);
+}
+.mcp-disclosure[data-open="true"] .mcp-disclosure__chev {
+  transform: rotate(90deg);
+}
+.mcp-disclosure__summary {
+  font-size: var(--fs-xs);
+  margin-left: 6px;
+  min-width: 0;
+}
+.mcp-disclosure__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 0 0 20px;
+}
+.mcp-tools {
+  list-style: none;
+  margin: 0;
+  padding: 4px 10px;
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  display: flex;
+  flex-direction: column;
+  font-size: var(--fs-xs);
+}
+.mcp-tools li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 0;
+  border-top: 1px solid var(--divider);
+}
+.mcp-tools li:first-child {
+  border-top: 0;
+}
+.mcp-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+}
+
+/* Activity. */
 .mcp-audit {
   list-style: none;
-  margin: 8px 0 0;
+  margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -64,6 +280,11 @@
 .mcp-audit li:first-child {
   border-top: 0;
 }
+/* Inside one assistant's dialog: no "who" column. */
+.mcp-audit--compact li {
+  grid-template-columns: 64px 130px 1fr auto;
+  font-size: var(--fs-xs);
+}
 .mcp-audit__when,
 .mcp-audit__who {
   color: var(--text-2);
@@ -79,24 +300,12 @@
 .mcp-audit li[data-ok="false"] .mcp-audit__detail {
   color: var(--danger);
 }
-
-.mcp-problem {
-  color: var(--danger);
-  overflow-wrap: anywhere;
-}
-
-.mcp-empty-line {
-  font-size: var(--fs-sm);
-  margin: 8px 0 0;
-}
-
 .mcp-audit li[data-reverted="true"] {
   opacity: 0.6;
 }
 .mcp-audit li[data-reverted="true"] .mcp-audit__tool {
   text-decoration: line-through;
 }
-
 /* Only there to hold the row's height while nothing can be reverted. */
 .mcp-audit__revert {
   min-width: 56px;
@@ -104,6 +313,10 @@
   justify-content: flex-end;
   font-size: var(--fs-sm);
   color: var(--text-3);
+}
+.mcp-footnote {
+  margin-right: auto;
+  font-size: var(--fs-xs);
 }
 
 /* The approval dialog. */
@@ -126,5 +339,12 @@
 @media (max-width: 720px) {
   .mcp-audit li {
     grid-template-columns: 74px 1fr auto;
+  }
+  .mcp-audit li > .mcp-audit__who,
+  .mcp-audit li > .mcp-audit__detail {
+    display: none;
+  }
+  .mcp-env .input:first-child {
+    width: 110px;
   }
 }

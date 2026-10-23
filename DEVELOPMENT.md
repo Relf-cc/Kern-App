@@ -268,7 +268,7 @@ opt-in two-replica test against a running server (see KERNWEB's README).
     off also forgets what was already recorded.
   - **Allow plugin and syntax downloads** (`privacy.pluginDownloads`) gates
     `syntax_install` on top of the network switch.
-- **AI assistants** (`mcp.enabled`, off by default; Settings → API →
+- **AI assistants** (`mcp.enabled`, off by default; Settings →
   Assistants) are the one feature where data leaves through a *client* rather
   than an outbound request, so the network switch does not cover it. While it
   is on, an assistant you have approved by name — Claude Desktop, Claude Code

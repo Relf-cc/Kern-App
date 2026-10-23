@@ -27,6 +27,7 @@ export type SettingsSection =
   | "data"
   | "privacy"
   | "api"
+  | "assistants"
   | "integrations"
   | "plugins"
   | "developer"
@@ -34,7 +35,7 @@ export type SettingsSection =
   | "about";
 
 /** Sub-pages of Settings → API (the account manager lives at /api/accounts). */
-export type ApiTab = "accounts" | "routing" | "usage" | "security" | "mcp";
+export type ApiTab = "accounts" | "routing" | "usage" | "security";
 
 export type Route =
   | { name: "dashboard"; id?: string }
@@ -110,7 +111,7 @@ export const useRouter = create<RouterState>((set, get) => ({
 
 export const navigate = (r: Route, opts?: { replace?: boolean }) => useRouter.getState().navigate(r, opts);
 
-const API_TABS: ApiTab[] = ["accounts", "routing", "usage", "security", "mcp"];
+const API_TABS: ApiTab[] = ["accounts", "routing", "usage", "security"];
 
 /** Internal path for routes that have one (e.g. "/api/accounts"). */
 export function pathOf(r: Route): string | null {
@@ -128,6 +129,8 @@ export function pathOf(r: Route): string | null {
 export function routeFromPath(path: string): Route | null {
   const parts = path.replace(/^\/+|\/+$/g, "").split("/");
   if (parts[0] === "api") {
+    // Assistants were a tab of API until they became a section of their own.
+    if (parts[1] === "mcp") return { name: "settings", section: "assistants" };
     const tab = (parts[1] ?? "accounts") as ApiTab;
     return API_TABS.includes(tab) ? { name: "api", tab } : null;
   }

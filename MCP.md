@@ -102,8 +102,10 @@ src-tauri/src/domain/mcp/
   outbound.rs  the other direction: the user's own servers, and the ToolRunner the AI router calls (§12)
 src-tauri/mcp-bridge/   new workspace member → kern-mcp(.exe)
 scripts/mcp-bundle.mjs  the bridge sidecar + the .mcpb, built before each tauri build
-src/features/ai/McpTab.tsx (+ mcp.css), src/features/ai/McpApproval.tsx,
-src/features/ai/McpServerDialog.tsx
+src/features/ai/AssistantsSection.tsx (+ mcp.css), the dialogs it opens
+(ConnectAssistantWizard, AssistantDialog, ProjectScopeDialog,
+HttpEndpointDialog, McpActivityDialog, McpServerWizard), mcpActions.ts,
+mcpForm.ts (+ test), McpApproval.tsx
 ```
 
 Plus the edits the house recipes demand:
@@ -111,7 +113,8 @@ Plus the edits the house recipes demand:
 - commands registered in `generate_handler!` in `src-tauri/src/lib.rs`, under a
   new `// mcp` group;
 - `api.mcp` in `src/lib/ipc.ts` and mirrored types in `src/lib/types.ts`;
-- `"mcp"` added to `ApiTab` in `src/stores/router.ts`;
+- `"assistants"` added to `SettingsSection` in `src/stores/router.ts` (it
+  began as an `"mcp"` tab of API; `/api/mcp` still resolves to it);
 - settings keys in `src/features/settings/schema.ts` **twice** — the interface
   and `DEFAULTS` — plus rows in `SettingsPage.tsx` with `hint` and `keywords`.
 
@@ -278,40 +281,73 @@ task in its own right by then). Created items go to Trash, as every other
 delete in Kern does. A whiteboard too big to keep a copy of simply has no
 plan, and the row says so instead of offering a button that does nothing.
 
-## 8. The settings tab
+## 8. The settings section
 
-The API page already has tabs `accounts | routing | usage | security`. Add
-**`mcp` — "Assistants"**: master toggle; running/stopped status; connected
-clients with scope, allowlist and last-seen; the audit list; and setup that
-does the work:
+**Settings → Assistants** (`SettingsSection` `"assistants"`) is ordinary
+settings rows — built by `useAssistantGroups` in `AssistantsSection.tsx`, so
+settings search finds every one — and each row says where things stand and
+offers one way in. Anything that takes more than one decision opens a dialog;
+anything that takes more than one step opens a `Wizard`. It started life as
+an `mcp` tab of the API page, and `/api/mcp` still resolves here.
 
-- **Set up Claude Desktop** → writes the `kern-mcp` entry into
-  `claude_desktop_config.json`, with copy-to-clipboard as a fallback.
-- **Claude Code** → `claude mcp add kern -- "<path>\kern-mcp.exe"`, one click
-  to copy.
-- **Extension bundle** → shows `kern.mcpb` in the file manager, to drag onto
-  Claude Desktop's Extensions page. The `.mcpb` (Anthropic's extension
-  format, renamed from `.dxt` in September 2025) is a zip of a manifest and
-  the bridge, built by `scripts/mcp-bundle.mjs` from `beforeBuildCommand`, so
-  every `tauri build` has one; the same script writes the
-  `binaries/kern-mcp-<triple>` sidecar that `bundle.externalBin` installs
-  beside `kern.exe`. `release.mjs` attaches `Kern_<version>.mcpb` to the
-  GitHub release as a plain download — it has nothing to do with the updater.
+| Group | Rows | Opens |
+| --- | --- | --- |
+| Assistants | master switch with listening status; one row per client (status, scope, projects, last used); *Connect an assistant* | **Connect** wizard; **Review/Manage** dialog per client |
+| Safety | *Ask before changes*; *Projects assistants may see*; calls a minute; *Activity* (summary); *Keep activity for*; *What an assistant can reach* | project picker; activity; the guarantees |
+| Local address | status and URL | HTTP setup wizard the first time, its manager after |
+| Servers Kern can use | `mcp.toolsEnabled`; one row per server (switch, Test / Edit / Remove); *Add a server*; `ai.maxToolRounds` | **Add a server** wizard |
 
-New keys: `mcp.enabled`, `mcp.confirmWrites`, `mcp.allowedProjects`,
-`mcp.maxCallsPerMinute`, `mcp.auditDays`. `mcp.allowedProjects` is the
-blanket allowlist: a project has to be inside it *and* inside the client's
-own list, and while it is set no assistant can create a project.
+**Connect an assistant** — *Choose → Set up → Approve*. Choosing Claude
+Desktop, Claude Code or another app; continuing turns `mcp.enabled` on if it
+wasn't. Set up does the work where Kern can:
 
-Phase 4 added two more groups to the same tab. **Over HTTP** —
-`mcp.httpEnabled`, `mcp.httpPort`, the address, whether it is listening, and
-the token with **Show**, **Copy**, **New token** and the two ready-made
-client configurations ([§11](#11-the-http-endpoint)). **Servers Kern can
-use** — `mcp.toolsEnabled`, `ai.maxToolRounds`, the list of added servers with
-a switch and **Test** on each, and the log of what Kern ran on them
-([§12](#12-kern-as-a-client)). They sit below the assistants rather than
-beside them, because they are a different direction of travel and the page
-should read that way.
+- **Claude Desktop** → *Automatically* writes the `kern-mcp` entry into
+  `claude_desktop_config.json`; *As an extension* shows `kern.mcpb` to drag
+  onto Claude Desktop's Extensions page; *By hand* is the fragment to copy.
+- **Claude Code** → `claude mcp add kern -- "<path>\kern-mcp.exe"` to copy.
+- **Another app** → the bridge path and config to copy, or the local HTTP
+  address (turned on from here) with its token.
+
+Approve then waits — polling every 2 s, beaten by `kern://mcp-state` — for
+the assistant to knock, and approves it inline with a scope and a project
+list. That last step is the point: setup used to end with "now find the
+request in Settings", while the assistant was being refused.
+
+A client that knocks while nobody is in the flow raises a toast whose
+**Review** opens the same approve-or-block dialog in place
+(`reviewAssistant` in `McpApproval.tsx`, mounted in both shells), so an
+assistant can be approved from wherever you are. While it is pending nothing
+applies until **Approve**; afterwards each change applies as it is made, as a
+settings row does.
+
+The `.mcpb` (Anthropic's extension format, renamed from `.dxt` in September
+2025) is a zip of a manifest and the bridge, built by
+`scripts/mcp-bundle.mjs` from `beforeBuildCommand`, so every `tauri build`
+has one; the same script writes the `binaries/kern-mcp-<triple>` sidecar that
+`bundle.externalBin` installs beside `kern.exe`. `release.mjs` attaches
+`Kern_<version>.mcpb` to the GitHub release as a plain download — it has
+nothing to do with the updater.
+
+Keys: `mcp.enabled`, `mcp.confirmWrites`, `mcp.allowedProjects`,
+`mcp.maxCallsPerMinute`, `mcp.auditDays`, and from phase 4
+`mcp.httpEnabled`, `mcp.httpPort` ([§11](#11-the-http-endpoint)) and
+`mcp.toolsEnabled` ([§12](#12-kern-as-a-client)). `mcp.allowedProjects` is
+the blanket allowlist: a project has to be inside it *and* inside the
+client's own list, and while it is set no assistant can create a project.
+
+**Add a server** — *Choose → Configure → Test*. Presets (Filesystem, Git,
+Fetch, Memory, Playwright) fill in the command; *Something else* takes any.
+Configure asks only for a name and, where the server needs them, folders
+(picked, not typed); the command, arguments, environment and working folder
+sit folded underneath, since a preset rarely needs them. Node launchers are
+written `npx.cmd` on Windows because `outbound.rs` starts the command
+directly, without a shell. Test saves first, then starts what was saved, and
+lists the tools it offered; **Done** switches the server on — and, if asked,
+`mcp.toolsEnabled` too. Editing opens at Configure, with *Save without
+testing*.
+
+The server presets, argument/environment forms and every row's summary line
+are pure functions in `mcpForm.ts`, covered by `mcpForm.test.ts`.
 
 ## 9. Phasing
 
@@ -383,7 +419,7 @@ can reach `127.0.0.1`, and a page in a browser can try. So:
 
 Identity works as it does on the pipe: the caller names itself
 (`X-Kern-Client`, or `?client=`, else "HTTP assistant"), that name is
-registered in `mcp_clients` and has to be approved in the Assistants tab, and
+registered in `mcp_clients` and has to be approved in Settings → Assistants, and
 the name is advisory — the token is what got it in. The service is built
 **per request**, for the client the token's caller named, so revoking an
 assistant stops its next call rather than its next connection.

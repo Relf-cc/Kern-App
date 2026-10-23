@@ -796,6 +796,19 @@
   flex-direction: column;
   gap: 1px;
 }
+/* Pages under a section (API's), shown beneath it while it's open. The
+   section itself reads as open rather than selected; the page is selected. */
+.settings__nav .nav-item[aria-expanded="true"] {
+  color: var(--text);
+}
+.settings__nav .nav-item[aria-expanded="true"] > svg {
+  color: var(--text-2);
+}
+.nav-item--sub {
+  height: calc(var(--nav-item-h) - 4px);
+  padding-left: 33px;
+  font-size: var(--fs-sm);
+}
 .settings__body {
   flex: 1;
   min-width: 0;
@@ -1662,10 +1675,6 @@
   flex-direction: column;
   gap: 16px;
 }
-.api-page__tabs {
-  border-bottom: 1px solid var(--border-subtle);
-  margin-bottom: 4px;
-}
 .provider-icon {
   display: inline-flex;
   align-items: center;
@@ -1852,40 +1861,6 @@
   align-items: center;
   gap: 6px;
   font-size: var(--fs-sm);
-}
-.ai-modes {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
-}
-.ai-mode {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px;
-  border-radius: var(--r-lg);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  text-align: left;
-  font-size: var(--fs-sm);
-  transition: border-color var(--t-hover) var(--ease), background var(--t-hover) var(--ease);
-}
-.ai-mode:hover {
-  background: var(--hover);
-}
-.ai-mode[data-active="true"] {
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
-}
-.ai-mode__radio {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1.5px var(--text-3);
-  flex-shrink: 0;
-}
-.ai-mode[data-active="true"] .ai-mode__radio {
-  box-shadow: inset 0 0 0 4px var(--accent);
 }
 .ai-note {
   font-size: var(--fs-xs);

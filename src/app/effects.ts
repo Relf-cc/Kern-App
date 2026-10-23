@@ -26,7 +26,7 @@ import { openNewTask } from "@/features/tasks/creation";
 import { useSessions } from "@/features/sessions/store";
 import { confirm } from "@/components/ui/Dialog";
 import { openTask } from "@/features/tasks/menu";
-import { askMcpConfirm, closeMcpConfirm } from "@/features/ai/McpApproval";
+import { askMcpConfirm, closeMcpConfirm, reviewAssistant } from "@/features/ai/McpApproval";
 import type { McpConfirmRequest } from "@/lib/types";
 
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -258,7 +258,7 @@ export function useBackendEvents() {
       }),
       listen<{ id: string; name: string }>("kern://mcp-pending", (e) => {
         toast(`${e.payload.name} wants to connect to Kern`, {
-          action: { label: "Review", run: () => navigate({ name: "api", tab: "mcp" }) },
+          action: { label: "Review", run: () => reviewAssistant(e.payload.id) },
           duration: 12_000,
         });
       }),

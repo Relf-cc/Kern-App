@@ -282,7 +282,7 @@ where
                 let _ = app.emit("kern://mcp-pending", json!({ "id": c.id, "name": c.name }));
             }
             let msg = if c.status == clients::PENDING {
-                format!("Kern is waiting for '{}' to be approved in Settings → API → Assistants.", c.name)
+                format!("Kern is waiting for '{}' to be approved in Settings → Assistants.", c.name)
             } else {
                 format!("'{}' has been blocked in Kern.", c.name)
             };
@@ -369,7 +369,7 @@ pub struct McpStatus {
     pub clients: Vec<clients::McpClient>,
 }
 
-/// Everything the Assistants tab shows about the server itself, read in one
+/// Everything Settings → Assistants shows about the server itself, read in one
 /// pass so the switch and the status can't disagree.
 fn snapshot(state: &AppState) -> AppResult<McpStatus> {
     let running = state.mcp.running();

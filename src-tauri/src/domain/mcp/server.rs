@@ -57,7 +57,7 @@ impl KernMcp {
     /// Policy, the work, the audit row and the refresh, in that order.
     ///
     /// `detail` is the one-line description of the arguments that the
-    /// Assistants tab shows; it must never carry the payload itself. The
+    /// Assistants settings shows; it must never carry the payload itself. The
     /// closure's second value is the batch's revert plan, empty for a read.
     async fn guarded<T, F>(&self, tool: &'static str, access: Access, detail: String, f: F) -> Result<T, String>
     where
@@ -120,7 +120,7 @@ impl KernMcp {
     }
 
     /// `call`, for a tool whose answer goes back as JSON. The `tool` string
-    /// is what the Assistants tab lists, so a resource read and a prompt go
+    /// is what Settings → Assistants lists, so a resource read and a prompt go
     /// under a `kern_resource_*` / `kern_prompt_*` name rather than their uri.
     async fn run<T, F>(&self, tool: &'static str, access: Access, detail: String, f: F) -> Result<Json<T>, String>
     where

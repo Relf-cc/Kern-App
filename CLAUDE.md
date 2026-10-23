@@ -10,6 +10,7 @@ recipes. The long-form documents are:
 | Document | Covers |
 | --- | --- |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Prerequisites, release process, updater, full architecture, Kern Cloud sync, privacy model, per-feature behaviour |
+| [DESIGN_CRITERIA.md](DESIGN_CRITERIA.md) | Interface design: tokens, layout, which component or modal pattern to use, copy, accessibility, a new-screen checklist |
 | [PERFORMANCE.md](PERFORMANCE.md) | Measurements and budgets |
 | [README.md](README.md) | What the app does, for users |
 
@@ -71,7 +72,7 @@ are Markdown docs and generated output.
 src/
   app/          bootstrap, Routes.tsx, Shell.tsx, global effects.ts, mode.ts, reset.ts, brand.ts
   components/
-    ui/         design-system controls — Button, Controls, Dialog, Menu, DatePicker, Tooltip, Toaster
+    ui/         design-system controls — Button, Controls, Dialog, Wizard, Menu, DatePicker, Tooltip, Toaster
     layout/     Sidebar, Inspector, ErrorBoundary, PageFallback, sortable
   features/<x>/ one folder per feature area (~40 of them), each with its page,
                 dialogs, pure logic modules and optional <x>.css
@@ -287,9 +288,11 @@ person can act on. Never surface a raw error string.
 
 **Components.** Reach for `src/components/ui` before writing a control:
 `Button`, `IconButton`, `Kbd`, `Switch`, `Checkbox`, `TaskCheck`, `TaskTitle`,
-`Segmented`, `Select`, `Slider`, `Popover`, `Progress`, `Ring`, `EmptyState`,
-`Skeleton`, `Dialog`, `confirm`, `confirmDelete`, `prompt`, `Dropdown`,
-`ContextMenu`, `DatePicker`, `Tooltip`. Icons are `lucide-react`.
+`Segmented`, `RadioCards`, `Select`, `Slider`, `Popover`, `Progress`, `Ring`,
+`EmptyState`, `Skeleton`, `Callout`, `CopyBlock`, `Dialog`, `Wizard`,
+`confirm`, `confirmDelete`, `prompt`, `Dropdown`, `ContextMenu`, `DatePicker`,
+`Tooltip`. Icons are `lucide-react`. Which to use when - and how a dialog or
+multistep flow should behave - is in [DESIGN_CRITERIA.md](DESIGN_CRITERIA.md).
 
 **Styling.** Plain CSS, no Tailwind, no CSS-in-JS. Use the variables in
 `src/styles/tokens.css` (`--bg`, `--surface`, `--text-2`, `--border`,

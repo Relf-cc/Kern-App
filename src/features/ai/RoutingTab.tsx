@@ -12,7 +12,7 @@ import { invalidate } from "@/lib/query";
 import { useSetting, setSetting } from "@/stores/settings";
 import { useProjects } from "@/hooks/data";
 import { Button, IconButton } from "@/components/ui/Button";
-import { Checkbox, Select } from "@/components/ui/Controls";
+import { Checkbox, RadioCards, Select } from "@/components/ui/Controls";
 import { SNumber, SToggle } from "@/features/settings/controls";
 import { toastError } from "@/stores/toast";
 import { useAiAccounts } from "./AccountsTab";
@@ -188,18 +188,13 @@ export function RoutingTab() {
     <div className="col" style={{ gap: 20 }}>
       <section>
         <div className="set-group__title">Switching policy</div>
-        <div className="ai-modes" role="radiogroup" aria-label="Switching policy">
-          {MODES.map((m) => (
-            <button key={m.id} type="button" role="radio" aria-checked={mode === m.id} className="ai-mode" data-active={mode === m.id || undefined} onClick={() => void setSetting("ai.routingMode", m.id)}>
-              <span className="row" style={{ gap: 6 }}>
-                <span className="ai-mode__radio" />
-                <b>{m.title}</b>
-                {m.recommended && <span className="chip">Recommended</span>}
-              </span>
-              <span className="faint">{m.text}</span>
-            </button>
-          ))}
-        </div>
+        <RadioCards
+          value={mode}
+          onChange={(m) => void setSetting("ai.routingMode", m)}
+          options={MODES.map((m) => ({ value: m.id, title: m.title, text: m.text, badge: m.recommended ? "Recommended" : undefined }))}
+          ariaLabel="Switching policy"
+          columns={2}
+        />
       </section>
       <section>
         <div className="set-group__title">Safeguards</div>

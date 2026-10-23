@@ -402,6 +402,223 @@
   padding: 10px 16px 14px;
 }
 
+/* ---------- Wizard (multistep dialog) */
+.wizard-dialog {
+  width: min(580px, calc(100vw - 48px));
+  max-height: 84vh;
+  top: 8vh;
+}
+.wizard-dialog.dialog--wide {
+  width: min(760px, calc(100vw - 48px));
+}
+.wizard-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 220px;
+}
+.wizard-dialog__blocking {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  text-align: right;
+}
+/* The lead sentence under the stepper: what this step is for, in one line. */
+.wizard-lead {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+.stepper {
+  list-style: none;
+  margin: -4px 0 0;
+  padding: 0 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--divider);
+  overflow-x: auto;
+}
+.stepper__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.stepper__item + .stepper__item::before {
+  content: "";
+  width: 18px;
+  height: 1px;
+  background: var(--border-strong);
+}
+.stepper__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: var(--control-h-sm);
+  padding: 0 8px 0 4px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+  transition: background var(--t-hover) var(--ease), color var(--t-hover) var(--ease);
+}
+.stepper__btn:disabled {
+  cursor: default;
+}
+.stepper__item[data-state="done"] .stepper__btn {
+  color: var(--text-2);
+}
+.stepper__item[data-state="done"] .stepper__btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.stepper__item[data-state="current"] .stepper__btn {
+  color: var(--text);
+  font-weight: 550;
+}
+.stepper__dot {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: var(--fs-2xs);
+  border: 1px solid var(--border-strong);
+  font-variant-numeric: tabular-nums;
+}
+.stepper__item[data-state="current"] .stepper__dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+.stepper__item[data-state="done"] .stepper__dot {
+  background: var(--surface-3);
+}
+
+/* ---------- Radio cards (a choice that needs a sentence per option) */
+.radio-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+}
+.radio-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  text-align: left;
+  font-size: var(--fs-sm);
+  transition: border-color var(--t-hover) var(--ease), background var(--t-hover) var(--ease);
+}
+.radio-card:hover:not(:disabled) {
+  background: var(--hover);
+}
+.radio-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.radio-card[data-active="true"] {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.radio-card__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.radio-card__radio {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+  flex-shrink: 0;
+  transition: box-shadow var(--t-press) var(--ease);
+}
+.radio-card[data-active="true"] .radio-card__radio {
+  box-shadow: inset 0 0 0 4px var(--accent);
+}
+.radio-card__icon {
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.radio-card__title {
+  font-weight: 550;
+  color: var(--text);
+}
+.radio-card__text {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  padding-left: 19px;
+}
+
+/* ---------- Code to copy (commands, config fragments) */
+.copy-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 8px 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.copy-block__text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 180px;
+  overflow: auto;
+  user-select: all;
+}
+
+/* ---------- Callout (the outcome of a test, a warning that needs reading) */
+.callout {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-size: var(--fs-sm);
+}
+.callout > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-2);
+}
+.callout[data-tone="ok"] > svg {
+  color: var(--text);
+}
+.callout[data-tone="warn"] > svg {
+  color: var(--warning);
+}
+.callout[data-tone="danger"] > svg {
+  color: var(--danger);
+}
+.callout__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.callout__title {
+  font-weight: 600;
+  color: var(--text);
+}
+.callout__text {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
 /* ---------- Switch */
 .switch {
   position: relative;

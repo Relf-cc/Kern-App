@@ -4,14 +4,16 @@
  */
 
 // "Claude Desktop wants to move 3 tasks to Trash" - the dialog an assistant's
-// write waits on when Settings -> API -> Assistants is set to ask.
+// write waits on when Settings → Assistants is set to ask. The same host also
+// opens "Claude Desktop wants to connect" from the toast that says so, so an
+// assistant can be approved from wherever you are rather than from Settings.
 //
 // The backend is holding a tool call open on a channel, not the database, so
 // taking a moment here costs nothing elsewhere in the app. Silence is a no:
 // the countdown runs out and the call is refused, because nobody being at the
 // keyboard is exactly when a write shouldn't go through.
 
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Bot, ShieldAlert } from "lucide-react";
 import { create } from "zustand";
 import type { McpConfirmRequest } from "@/lib/types";
@@ -22,7 +24,15 @@ import { announce } from "@/lib/announce";
 import "./mcp.css";
 
 /** The question on screen, if there is one. Pushed from `app/effects.ts`. */
-export const useMcpConfirm = create<{ req: McpConfirmRequest | null }>(() => ({ req: null }));
+export const useMcpConfirm = create<{ req: McpConfirmRequest | null; review: string | null }>(() => ({ req: null, review: null }));
+
+// Settings code, so only fetched once someone actually asks to review.
+const AssistantDialog = lazy(() => import("./AssistantDialog"));
+
+/** Opens the approve-or-block dialog for one assistant. */
+export function reviewAssistant(id: string) {
+  useMcpConfirm.setState({ review: id });
+}
 
 export function askMcpConfirm(req: McpConfirmRequest) {
   useMcpConfirm.setState({ req });
@@ -57,6 +67,7 @@ const WANTS: Record<string, (detail: string) => string> = {
 
 export function McpApprovalHost() {
   const req = useMcpConfirm((s) => s.req);
+  const review = useMcpConfirm((s) => s.review);
   const [left, setLeft] = useState(0);
 
   // One timer per question, started when it appears. The backend keeps its
@@ -79,43 +90,50 @@ export function McpApprovalHost() {
   const danger = !!req?.destructive;
   const wants = req ? (WANTS[req.tool]?.(req.detail) ?? "change something") : "";
   return (
-    <Dialog
-      open={!!req}
-      onOpenChange={(o) => !o && answer(false)}
-      title={req ? `${req.client} wants to ${wants}` : undefined}
-      centered
-      hideClose
-      className="mcp-ask"
-      footer={
-        <>
-          <span className="mcp-ask__clock tabular faint">
-            {left > 0 ? `Refused in ${left}s if you don't answer` : "Waiting…"}
-          </span>
-          <Button variant="ghost" onClick={() => answer(false)} autoFocus={danger}>
-            Don't allow
-          </Button>
-          <Button variant={danger ? "danger" : "primary"} autoFocus={!danger} onClick={() => answer(true)}>
-            Allow
-          </Button>
-        </>
-      }
-    >
-      {req && (
-        <>
-          <div className="mcp-ask__tool">
-            {danger ? <ShieldAlert size={15} /> : <Bot size={15} />}
-            <span className="mono">{req.tool.replace(/^kern_/, "")}</span>
-            <span className="faint">{req.detail}</span>
-          </div>
-          <p className="dialog__desc">
-            It is connected over Kern's local pipe and has write access. Allowing this changes your real work — an
-            assistant's deletes go to Trash, and the Assistants tab can put the whole call back afterwards.
-          </p>
-          <p className="dialog__desc faint">
-            Asked because <b>Ask before changes</b> is on in Settings → API → Assistants.
-          </p>
-        </>
+    <>
+      {review && (
+        <Suspense fallback={null}>
+          <AssistantDialog id={review} onClose={() => useMcpConfirm.setState({ review: null })} />
+        </Suspense>
       )}
-    </Dialog>
+      <Dialog
+        open={!!req}
+        onOpenChange={(o) => !o && answer(false)}
+        title={req ? `${req.client} wants to ${wants}` : undefined}
+        centered
+        hideClose
+        className="mcp-ask"
+        footer={
+          <>
+            <span className="mcp-ask__clock tabular faint">
+              {left > 0 ? `Refused in ${left}s if you don't answer` : "Waiting…"}
+            </span>
+            <Button variant="ghost" onClick={() => answer(false)} autoFocus={danger}>
+              Don't allow
+            </Button>
+            <Button variant={danger ? "danger" : "primary"} autoFocus={!danger} onClick={() => answer(true)}>
+              Allow
+            </Button>
+          </>
+        }
+      >
+        {req && (
+          <>
+            <div className="mcp-ask__tool">
+              {danger ? <ShieldAlert size={15} /> : <Bot size={15} />}
+              <span className="mono">{req.tool.replace(/^kern_/, "")}</span>
+              <span className="faint">{req.detail}</span>
+            </div>
+            <p className="dialog__desc">
+              It is connected over Kern's local pipe and has write access. Allowing this changes your real work — an
+              assistant's deletes go to Trash, and Activity in Settings → Assistants can put the whole call back afterwards.
+            </p>
+            <p className="dialog__desc faint">
+              Asked because <b>Ask before changes</b> is on in Settings → Assistants.
+            </p>
+          </>
+        )}
+      </Dialog>
+    </>
   );
 }

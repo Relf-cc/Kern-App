@@ -15,6 +15,8 @@ import { useState } from "react";
 type KeysOfType<T> = { [K in SettingKey]: Settings[K] extends T ? K : never }[SettingKey];
 
 export interface RowDef {
+  /** Identity when the label can change (a renamed item), so a dialog the row opened stays open. */
+  id?: string;
   label: string;
   hint?: ReactNode;
   control?: ReactNode;

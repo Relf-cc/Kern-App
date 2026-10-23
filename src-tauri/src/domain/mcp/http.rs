@@ -20,7 +20,7 @@
 //!   browser cannot talk to Kern even with the token.
 //!
 //! Everything past that is the pipe's story exactly: the client is named,
-//! that name is approved once in the Assistants tab, and every call goes
+//! that name is approved once in Settings → Assistants, and every call goes
 //! through `policy` and lands in the audit. The name is advisory here too —
 //! the token is what gets a caller in — so a token belongs to the person,
 //! not to a program, and rotating it locks every client out at once.
@@ -372,7 +372,7 @@ fn percent_decode(s: &str) -> String {
 ///
 /// Nothing here reads the user's data until all three have passed, and the
 /// service is built for the client the request belongs to — so revoking an
-/// assistant in the Assistants tab stops its very next call, not its next
+/// assistant in Settings → Assistants stops its very next call, not its next
 /// connection.
 async fn endpoint(
     axum::extract::State(app): axum::extract::State<AppHandle>,
@@ -389,7 +389,7 @@ async fn endpoint(
         return refusal(StatusCode::FORBIDDEN, "Kern's assistant endpoint answers only on this computer's own address.");
     }
     let Ok(Some(real)) = token(false) else {
-        return refusal(StatusCode::SERVICE_UNAVAILABLE, "Kern has no token for this endpoint yet. Open Settings → API → Assistants in Kern.");
+        return refusal(StatusCode::SERVICE_UNAVAILABLE, "Kern has no token for this endpoint yet. Open Settings → Assistants in Kern.");
     };
     let headers = request.headers().clone();
     match offered_token(&headers) {
@@ -397,13 +397,13 @@ async fn endpoint(
         Some(_) => {
             return refusal(
                 StatusCode::UNAUTHORIZED,
-                "That token isn't Kern's. The current one is in Kern under Settings → API → Assistants.",
+                "That token isn't Kern's. The current one is in Kern under Settings → Assistants.",
             )
         }
         None => {
             return refusal(
                 StatusCode::UNAUTHORIZED,
-                "Kern's assistant endpoint needs a bearer token. Send it as 'Authorization: Bearer …'; the token is in Kern under Settings → API → Assistants.",
+                "Kern's assistant endpoint needs a bearer token. Send it as 'Authorization: Bearer …'; the token is in Kern under Settings → Assistants.",
             )
         }
     }
@@ -429,7 +429,7 @@ async fn endpoint(
                 let _ = app.emit("kern://mcp-pending", json!({ "id": c.id, "name": c.name }));
                 return refusal(
                     StatusCode::FORBIDDEN,
-                    &format!("Kern is waiting for '{}' to be approved in Settings → API → Assistants.", c.name),
+                    &format!("Kern is waiting for '{}' to be approved in Settings → Assistants.", c.name),
                 );
             }
             return refusal(StatusCode::FORBIDDEN, &format!("'{}' has been blocked in Kern.", c.name));
