@@ -118,12 +118,11 @@ let mcpb = null;
 if (existsSync(mcpbSource)) {
   mcpb = join(bundle, `Kern_${version}.mcpb`);
   copyFileSync(mcpbSource, mcpb);
-  console.log(`
-✓ ${mcpb}`);
+  console.log(`\n✓ ${mcpb}`);
 } else {
-  console.log("
-! No kern.mcpb was built, so the Claude Desktop extension won't be attached.");
+  console.log("\n! No kern.mcpb was built, so the Claude Desktop extension won't be attached.");
 }
+
 const platform = (file) => {
   if (!existsSync(file) || !existsSync(`${file}.sig`)) fail(`Missing ${file} or its .sig - was the build signed?`);
   const name = file.split(/[\\/]/).pop();
