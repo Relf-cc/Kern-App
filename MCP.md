@@ -11,6 +11,7 @@ put back afterwards. Phase 4 added the three optional pieces: a loopback
 **HTTP endpoint** beside the pipe ([§11](#11-the-http-endpoint)), Kern as an
 MCP **client** ([§12](#12-kern-as-a-client)), and Kern's own AI features on
 the **`claude` CLI** rather than an API key ([Appendix B](#appendix-b--putting-your-subscription-behind-kerns-own-ai)).
+All of it ships in **0.2.6** (`release/notes-0.2.6.md`).
 
 ## The one thing to get straight first
 
@@ -74,8 +75,8 @@ Two costs to accept up front:
 
 - **MSRV moves 1.80 → 1.88.** rmcp 3.6 is edition 2024. `rust-version` in
   `src-tauri/Cargo.toml` needs updating, and CI/toolchain with it.
-- **Binary growth.** Measured after phase 4: the release `kern.exe` is
-  **13.6 MB** and the bridge 0.15 MB, which is the row now in
+- **Binary growth.** Measured on the 0.2.6 build: the release `kern.exe` is
+  **15.1 MB** and the bridge 0.15 MB, which is the row now in
   PERFORMANCE.md — that table is the record. (The 7.3 MB figure elsewhere in
   that document is the process's working set, not the file.)
 
@@ -321,6 +322,7 @@ should read that way.
 | **2 — the asks** | `kern_project_setup` via `ProjectDoc`, mermaid port + shared fixture, milestones and labels, resources, prompts. | 2 days | done |
 | **3 — polish** | approval dialog, revert-batch, activity UI, `.mcpb`, `kern_project_update` and `kern_task_move`, DEVELOPMENT.md and README. | 1–2 days | done |
 | **4 — optional** | HTTP transport (+axum) for other clients (§11); Kern as MCP client (§12); Appendix B. | 2–3 days | done |
+| **5 — ship** | version 0.2.6, release notes at `release/notes-0.2.6.md`, the artifact sizes in PERFORMANCE.md re-measured from the 0.2.6 build. | ½ day | done |
 
 The surface in §4 is complete. The settings keys are now eight —
 `mcp.enabled`, `mcp.confirmWrites`, `mcp.allowedProjects`,
