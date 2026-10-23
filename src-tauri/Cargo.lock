@@ -2340,7 +2340,7 @@ dependencies = [
 
 [[package]]
 name = "kern"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "base64 0.22.1",
