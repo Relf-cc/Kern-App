@@ -17,9 +17,9 @@
 //!   records with their ids, sort orders and timestamps.
 
 use crate::domain::mcp::clients::McpClient;
-use crate::domain::mcp::policy;
-use crate::domain::{activity, boards, labels, notes, projects, search, tasks};
-use crate::error::{invalid, AppResult};
+use crate::domain::mcp::{mermaid, policy};
+use crate::domain::{activity, boards, labels, milestones, notes, projects, search, tasks, templates, whiteboards};
+use crate::error::{invalid, AppError, AppResult};
 use chrono::Local;
 use rmcp::schemars;
 use rusqlite::Connection;
@@ -400,6 +400,179 @@ pub fn activity_recent(conn: &Connection, client: &McpClient, args: &ActivityArg
         .collect())
 }
 
+#[derive(Serialize, schemars::JsonSchema, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MilestoneBrief {
+    pub id: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_date: Option<String>,
+    /// planned | active | completed | cancelled
+    pub status: String,
+    pub open_tasks: i64,
+    pub done_tasks: i64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub overdue: bool,
+}
+
+fn milestone_brief(m: milestones::Milestone) -> MilestoneBrief {
+    MilestoneBrief {
+        id: m.id,
+        title: m.title,
+        description: m.description,
+        target_date: m.target_date,
+        status: m.status,
+        open_tasks: m.task_total - m.task_done,
+        done_tasks: m.task_done,
+        overdue: m.overdue,
+    }
+}
+
+#[derive(Deserialize, schemars::JsonSchema, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectIdArgs {
+    pub project_id: String,
+}
+
+pub fn milestone_list(conn: &Connection, client: &McpClient, args: &ProjectIdArgs) -> AppResult<Vec<MilestoneBrief>> {
+    policy::ensure_project(conn, client, Some(&args.project_id))?;
+    Ok(milestones::list(conn, &args.project_id)?.into_iter().map(milestone_brief).collect())
+}
+
+#[derive(Serialize, schemars::JsonSchema, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDigest {
+    pub project: ProjectBrief,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub boards: Vec<BoardBrief>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub milestones: Vec<MilestoneBrief>,
+    /// Open tasks, soonest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<TaskBrief>,
+    /// Titles only; read one with kern_note_get.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<NoteBrief>,
+}
+
+/// One project and everything on it worth a sentence — the shape behind both
+/// `kern_project_get` and the `kern://project/{id}` resource, so an assistant
+/// can orient itself in a project in one go rather than five.
+pub fn project_get(conn: &Connection, client: &McpClient, args: &IdArgs) -> AppResult<ProjectDigest> {
+    policy::ensure_project(conn, client, Some(&args.id))?;
+    let names = Names::load(conn)?;
+    let project = projects::get_project(conn, &args.id)?;
+    let mut boards = vec![];
+    for b in boards::list_boards(conn, &args.id)? {
+        boards.push(board_brief(conn, b)?);
+    }
+    let q = tasks::TaskQuery {
+        project_ids: Some(vec![args.id.clone()]),
+        top_level_only: true,
+        order: Some("due".into()),
+        limit: Some(100),
+        ..Default::default()
+    };
+    Ok(ProjectDigest {
+        project: project_brief(project),
+        boards,
+        milestones: milestones::list(conn, &args.id)?.into_iter().map(milestone_brief).collect(),
+        tasks: tasks::query_tasks(conn, &q)?.iter().map(|t| names.task(t)).collect(),
+        notes: notes::list(conn, Some(&args.id), false)?
+            .into_iter()
+            .map(|n| NoteBrief { id: n.id, title: n.title, project_id: n.project_id, content: None })
+            .collect(),
+    })
+}
+
+#[derive(Serialize, schemars::JsonSchema, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WhiteboardBrief {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub objects: i64,
+}
+
+pub fn whiteboard_list(conn: &Connection, client: &McpClient, args: &BoardListArgs) -> AppResult<Vec<WhiteboardBrief>> {
+    policy::ensure_project(conn, client, args.project_id.as_deref())?;
+    let names = Names::load(conn)?;
+    Ok(whiteboards::list(conn, args.project_id.as_deref())?
+        .into_iter()
+        .filter(|w| policy::visible(conn, client, w.project_id.as_deref()))
+        .map(|w| WhiteboardBrief {
+            project: w.project_id.as_ref().and_then(|p| names.projects.get(p).cloned()),
+            id: w.id,
+            name: w.name,
+            project_id: w.project_id,
+            objects: w.node_count,
+        })
+        .collect())
+}
+
+#[derive(Serialize, schemars::JsonSchema, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WhiteboardMermaid {
+    pub name: String,
+    /// The board as Mermaid `flowchart` text.
+    pub mermaid: String,
+    pub included: usize,
+    /// Objects with no Mermaid equivalent — drawings, images, loose lines —
+    /// which were left out rather than guessed at.
+    pub skipped: usize,
+}
+
+pub fn whiteboard_to_mermaid(conn: &Connection, client: &McpClient, args: &IdArgs) -> AppResult<WhiteboardMermaid> {
+    let wb = whiteboards::get(conn, &args.id)?;
+    policy::ensure_project(conn, client, wb.project_id.as_deref())?;
+    let nodes = whiteboards::nodes(conn, &args.id)?;
+    let edges = whiteboards::edges(conn, &args.id)?;
+    let out = mermaid::to_mermaid(&nodes, &edges, mermaid::Direction::Tb);
+    Ok(WhiteboardMermaid { name: wb.name, mermaid: out.text, included: out.included, skipped: out.skipped })
+}
+
+// ------------------------------------------------------------ finding things
+
+/// The project an assistant named, by id or by name. Prompts take a name
+/// because that is what someone types into the prompt picker.
+pub fn find_project(conn: &Connection, client: &McpClient, needle: &str) -> AppResult<projects::Project> {
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return invalid("Name a project.");
+    }
+    if let Ok(p) = projects::get_project(conn, needle) {
+        policy::ensure_project(conn, client, Some(&p.id))?;
+        return Ok(p);
+    }
+    visible_projects(conn, client, true)?
+        .into_iter()
+        .find(|p| p.name.eq_ignore_ascii_case(needle))
+        .ok_or_else(|| AppError::NotFound(format!("Project '{needle}'")))
+}
+
+/// The note an assistant named, by id or by title.
+pub fn find_note(conn: &Connection, client: &McpClient, needle: &str) -> AppResult<notes::Note> {
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return invalid("Name a note.");
+    }
+    if let Ok(n) = notes::get_note(conn, needle) {
+        policy::ensure_project(conn, client, n.project_id.as_deref())?;
+        return Ok(n);
+    }
+    let found = notes::list(conn, None, false)?
+        .into_iter()
+        .filter(|n| policy::visible(conn, client, n.project_id.as_deref()))
+        .find(|n| n.title.eq_ignore_ascii_case(needle))
+        .ok_or_else(|| AppError::NotFound(format!("Note '{needle}'")))?;
+    notes::get_note(conn, &found.id)
+}
+
 // ------------------------------------------------------------ writing
 
 #[derive(Deserialize, schemars::JsonSchema, Debug, Default, Clone)]
@@ -653,6 +826,328 @@ pub fn board_create(conn: &mut Connection, client: &McpClient, args: &BoardCreat
     board_brief(conn, board)
 }
 
+// ------------------------------------------------------ setting up a project
+
+// `kern_project_setup` is the one tool that earns a whole plan in a single
+// call, and it is `templates.rs` wearing a different hat: a project template
+// is already boards with columns, milestones, scheduled tasks with checklists
+// and notes, and `create_project_from` already instantiates one in a single
+// transaction. These structs are the model-facing shape of that document —
+// a mirror rather than the thing itself, so that a field Kern adds for its
+// own templates doesn't silently become something an assistant can set, and
+// so each field can say what it means to someone who has never seen Kern.
+//
+// Dates are offsets in days from `startDate`, exactly as a template stores
+// them, because "day 0, day 14, day 28" is how a plan is actually described.
+
+#[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NewColumn {
+    pub name: String,
+    /// What a task dropped here becomes: todo | in_progress | blocked | completed.
+    pub status: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NewBoard {
+    pub name: String,
+    /// Columns, left to right. Leave empty for the usual set.
+    pub columns: Vec<NewColumn>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NewMilestone {
+    /// A short handle — "beta", "launch" — that tasks below point at. Required.
+    pub key: String,
+    pub title: String,
+    pub description: Option<String>,
+    /// Days after the start date. 0 is the start day itself.
+    pub offset_days: Option<i64>,
+    /// Mark it as a software release.
+    pub is_release: bool,
+}
+
+#[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PlannedTask {
+    /// What needs doing. Required.
+    pub title: String,
+    pub description: Option<String>,
+    /// todo (default) | in_progress | blocked
+    pub status: Option<String>,
+    /// 0 none, 1 low, 2 medium, 3 high.
+    pub priority: i64,
+    /// Which board, by position in `boards` (0 is the first).
+    pub board: Option<usize>,
+    /// The name of a column on that board.
+    pub column: Option<String>,
+    /// Label names. Any that don't exist yet are created.
+    pub labels: Vec<String>,
+    /// Days after the start date, for the due date.
+    pub due_offset: Option<i64>,
+    pub estimate_minutes: Option<i64>,
+    /// The `key` of one of the milestones above.
+    pub milestone: Option<String>,
+    /// Steps, as a checklist under this task.
+    pub subtasks: Vec<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NewNote {
+    pub title: String,
+    /// The body, as Markdown.
+    pub content: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectSetupArgs {
+    /// What the project is called. Required.
+    pub name: String,
+    pub description: Option<String>,
+    /// The day the plan starts, YYYY-MM-DD. Defaults to today, and every
+    /// offset below counts from it.
+    pub start_date: Option<String>,
+    /// Days after the start for the project's own target date.
+    pub target_offset: Option<i64>,
+    /// Boards and their columns. The first replaces the project's default one.
+    pub boards: Vec<NewBoard>,
+    pub milestones: Vec<NewMilestone>,
+    pub tasks: Vec<PlannedTask>,
+    pub notes: Vec<NewNote>,
+}
+
+fn task_doc(t: &PlannedTask) -> templates::TaskDoc {
+    templates::TaskDoc {
+        title: t.title.clone(),
+        description: t.description.clone().unwrap_or_default(),
+        status: t.status.clone(),
+        priority: t.priority,
+        board: t.board,
+        column: t.column.clone(),
+        labels: t.labels.clone(),
+        due_offset: t.due_offset,
+        estimate_minutes: t.estimate_minutes,
+        milestone: t.milestone.clone(),
+        recurrence: None,
+        subtasks: t
+            .subtasks
+            .iter()
+            .map(|s| templates::TaskDoc { title: s.clone(), ..Default::default() })
+            .collect(),
+    }
+}
+
+fn project_doc(args: &ProjectSetupArgs) -> templates::ProjectDoc {
+    templates::ProjectDoc {
+        description: args.description.clone().unwrap_or_default(),
+        target_offset: args.target_offset,
+        boards: args
+            .boards
+            .iter()
+            .map(|b| templates::BoardDoc {
+                name: b.name.clone(),
+                columns: b
+                    .columns
+                    .iter()
+                    .map(|c| boards::ColumnTemplate { name: c.name.trim().to_string(), status: c.status.clone() })
+                    .collect(),
+            })
+            .collect(),
+        milestones: args
+            .milestones
+            .iter()
+            .map(|m| templates::MilestoneDoc {
+                key: m.key.clone(),
+                title: m.title.clone(),
+                description: m.description.clone().unwrap_or_default(),
+                offset_days: m.offset_days,
+                is_release: m.is_release,
+            })
+            .collect(),
+        tasks: args.tasks.iter().map(task_doc).collect(),
+        notes: args.notes.iter().map(|n| templates::NoteDoc { title: n.title.clone(), content: n.content.clone() }).collect(),
+        ..Default::default()
+    }
+}
+
+/// A whole project — boards, milestones, scheduled tasks, notes — in one
+/// transaction. Either all of it arrives or none of it does.
+pub fn project_setup(conn: &mut Connection, client: &McpClient, args: &ProjectSetupArgs) -> AppResult<ProjectDigest> {
+    if !client.projects.is_empty() {
+        return invalid(format!(
+            "'{}' can only work in a chosen set of projects, so it can't create a new one. That's changed in Kern under Settings → API → Assistants.",
+            client.name
+        ));
+    }
+    let total: usize = args.tasks.iter().map(|t| 1 + t.subtasks.len()).sum();
+    if total > MAX_BATCH {
+        return invalid(format!(
+            "That's {total} tasks in one project. Set the project up with the first {MAX_BATCH} and add the rest with kern_task_create."
+        ));
+    }
+    if args.notes.iter().any(|n| n.content.chars().count() > MAX_NOTE_CHARS) {
+        return invalid("One of those notes is too long. Split it into several.");
+    }
+    let doc = project_doc(args);
+    let input = templates::UseProject {
+        name: args.name.clone(),
+        start_date: args.start_date.clone(),
+        ..Default::default()
+    };
+    let tx = conn.transaction()?;
+    let project = templates::create_project_from(&tx, &doc, &input)?;
+    tx.commit()?;
+    project_get(conn, client, &IdArgs { id: project.id })
+}
+
+// ------------------------------------------------------ milestones and labels
+
+#[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MilestoneCreateArgs {
+    pub project_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    /// The day it's due, YYYY-MM-DD.
+    pub target_date: Option<String>,
+    /// Mark it as a software release.
+    pub is_release: bool,
+}
+
+pub fn milestone_create(conn: &Connection, client: &McpClient, args: &MilestoneCreateArgs) -> AppResult<MilestoneBrief> {
+    policy::ensure_project(conn, client, Some(&args.project_id))?;
+    let input = milestones::MilestoneInput {
+        project_id: args.project_id.clone(),
+        title: args.title.clone(),
+        description: args.description.clone(),
+        target_date: args.target_date.clone(),
+        is_release: Some(args.is_release),
+        ..Default::default()
+    };
+    Ok(milestone_brief(milestones::create(conn, &input)?))
+}
+
+#[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LabelCreateArgs {
+    /// The label's name. A label of this name already in use is reused rather
+    /// than duplicated.
+    pub name: String,
+    /// A colour from Kern's palette: hue-0 … hue-7. One is picked if you
+    /// don't choose.
+    pub color: Option<String>,
+}
+
+pub fn label_create(conn: &Connection, _client: &McpClient, args: &LabelCreateArgs) -> AppResult<LabelBrief> {
+    let id = labels::ensure(conn, &args.name, args.color.as_deref())?;
+    labels::list(conn)?
+        .into_iter()
+        .find(|l| l.id == id)
+        .map(|l| LabelBrief { id: l.id, name: l.name, open_tasks: l.task_count })
+        .ok_or_else(|| AppError::NotFound("Label".into()))
+}
+
+// ------------------------------------------------------------ flowcharts
+
+#[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WhiteboardMermaidArgs {
+    /// The flowchart as Mermaid `flowchart` or `graph` text. Required; no
+    /// other kind of Mermaid diagram belongs on a whiteboard.
+    pub mermaid: String,
+    /// A name for the new whiteboard.
+    pub name: Option<String>,
+    pub project_id: Option<String>,
+    /// Draw onto an existing whiteboard instead of making a new one. The
+    /// shapes are placed clear of whatever is already on it.
+    pub whiteboard_id: Option<String>,
+    /// With `whiteboardId`, replace what's there rather than adding to it.
+    pub replace: bool,
+}
+
+#[derive(Serialize, schemars::JsonSchema, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WhiteboardResult {
+    pub id: String,
+    pub name: String,
+    pub shapes: usize,
+    pub connectors: usize,
+    pub message: String,
+}
+
+/// The most shapes one flowchart may bring. A confused agent should hit a
+/// wall, not fill a board with a thousand boxes.
+const MAX_SHAPES: usize = 200;
+
+/// Where new shapes go on a board that already has some: clear of the lot.
+fn below(nodes: &[whiteboards::WbNode]) -> (f64, f64) {
+    let bottom = nodes.iter().map(|n| n.y + n.height.unwrap_or(0.0)).fold(f64::NEG_INFINITY, f64::max);
+    if bottom.is_finite() {
+        (0.0, bottom + 80.0)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+pub fn whiteboard_from_mermaid(
+    conn: &mut Connection,
+    client: &McpClient,
+    args: &WhiteboardMermaidArgs,
+) -> AppResult<WhiteboardResult> {
+    // The parser's own sentence is the best thing to hand back: it says what
+    // about the text stopped it.
+    let chart = mermaid::parse_mermaid(&args.mermaid).map_err(AppError::Invalid)?;
+    if chart.nodes.len() > MAX_SHAPES {
+        return invalid(format!("That chart has {} boxes, and {MAX_SHAPES} is the most for one board.", chart.nodes.len()));
+    }
+    // An existing board is drawn onto; otherwise one is made for the chart.
+    let (board, added_to) = match &args.whiteboard_id {
+        Some(id) => {
+            let wb = whiteboards::get(conn, id)?;
+            policy::ensure_project(conn, client, wb.project_id.as_deref())?;
+            let origin = if args.replace { (0.0, 0.0) } else { below(&whiteboards::nodes(conn, id)?) };
+            let (nodes, edges) = mermaid::chart_to_scene(&chart, origin);
+            let tx = conn.transaction()?;
+            if args.replace {
+                whiteboards::save_scene(&tx, &wb.id, &nodes, &edges)?;
+            } else {
+                // A patch, not a save: whatever else is on the board — and
+                // whoever else is editing it — stays.
+                whiteboards::patch_scene(&tx, &wb.id, &whiteboards::ScenePatch { nodes, edges, ..Default::default() })?;
+            }
+            tx.commit()?;
+            (wb, !args.replace)
+        }
+        None => {
+            policy::ensure_project(conn, client, args.project_id.as_deref())?;
+            let name = args.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or("Flowchart");
+            let (nodes, edges) = mermaid::chart_to_scene(&chart, (0.0, 0.0));
+            let tx = conn.transaction()?;
+            let wb = whiteboards::create(&tx, args.project_id.as_deref(), name)?;
+            whiteboards::save_scene(&tx, &wb.id, &nodes, &edges)?;
+            activity::log(&tx, args.project_id.as_deref(), "whiteboard", &wb.id, "created", &wb.name)?;
+            tx.commit()?;
+            (wb, false)
+        }
+    };
+    let (shapes, connectors) = (chart.nodes.len(), chart.edges.len());
+    Ok(WhiteboardResult {
+        shapes,
+        connectors,
+        message: format!(
+            "Drew {shapes} shapes and {connectors} connectors {} “{}”.",
+            if added_to { "onto" } else { "on" },
+            board.name
+        ),
+        id: board.id,
+        name: board.name,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,11 +1221,27 @@ mod tests {
         let note = notes::create_note(c, "Coolant notes", "Flow rates", Some(&id)).unwrap().id;
         boards::create_board(c, &id, "Build", &boards::default_columns(c)).unwrap();
 
+        let flow = whiteboard_from_mermaid(
+            c,
+            &cl,
+            &WhiteboardMermaidArgs {
+                mermaid: "flowchart TD\n A[Shield] --> B[Check]".into(),
+                name: Some("Flow".into()),
+                project_id: Some(id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
         // Reachable to begin with, or the assertions below prove nothing.
         assert!(project_list(c, &cl, &ProjectListArgs::default()).unwrap().iter().any(|p| p.id == id));
+        assert!(project_get(c, &cl, &IdArgs { id: id.clone() }).is_ok());
         assert!(task_search(c, &cl, &TaskSearchArgs::default()).unwrap().iter().any(|x| x.id == t));
         assert!(note_get(c, &cl, &IdArgs { id: note.clone() }).is_ok());
         assert!(board_list(c, &cl, &BoardListArgs::default()).unwrap().iter().any(|b| b.name == "Build"));
+        assert!(milestone_list(c, &cl, &ProjectIdArgs { project_id: id.clone() }).is_ok());
+        assert!(whiteboard_list(c, &cl, &BoardListArgs::default()).unwrap().iter().any(|w| w.id == flow.id));
+        assert!(whiteboard_to_mermaid(c, &cl, &IdArgs { id: flow.id.clone() }).is_ok());
         assert!(!search_all(c, &cl, &SearchArgs { query: "shield".into(), scope: None, limit: None }).unwrap().is_empty());
 
         lock(c, &id);
@@ -738,6 +1249,11 @@ mod tests {
         // Reads: the project, and everything inside it, is simply not there.
         assert!(!project_list(c, &cl, &ProjectListArgs::default()).unwrap().iter().any(|p| p.id == id));
         assert!(!project_list(c, &cl, &ProjectListArgs { include_archived: true }).unwrap().iter().any(|p| p.id == id));
+        assert!(project_get(c, &cl, &IdArgs { id: id.clone() }).is_err());
+        assert!(milestone_list(c, &cl, &ProjectIdArgs { project_id: id.clone() }).is_err());
+        assert!(whiteboard_list(c, &cl, &BoardListArgs::default()).unwrap().is_empty());
+        assert!(whiteboard_list(c, &cl, &BoardListArgs { project_id: Some(id.clone()) }).is_err());
+        assert!(whiteboard_to_mermaid(c, &cl, &IdArgs { id: flow.id.clone() }).is_err());
         assert!(!overview(c, &cl).unwrap().projects.iter().any(|p| p.id == id));
         let today = today_list(c, &cl).unwrap();
         assert!(![today.overdue, today.due_today, today.in_progress].concat().iter().any(|x| x.id == t));
@@ -760,6 +1276,13 @@ mod tests {
         assert!(note_create(c, &cl, &NoteCreateArgs { title: "New".into(), content: "x".into(), project_id: Some(id.clone()) }).is_err());
         assert!(note_update(c, &cl, &NoteUpdateArgs { id: note, title: None, content: Some("Rewritten".into()), append: None }).is_err());
         assert!(board_create(c, &cl, &BoardCreateArgs { project_id: id.clone(), name: "Another".into(), columns: None }).is_err());
+        let milestone = MilestoneCreateArgs { project_id: id.clone(), title: "Meltdown".into(), ..Default::default() };
+        assert!(milestone_create(c, &cl, &milestone).is_err());
+        let chart = "flowchart TD\n A --> B";
+        let into_project = WhiteboardMermaidArgs { mermaid: chart.into(), project_id: Some(id.clone()), ..Default::default() };
+        assert!(whiteboard_from_mermaid(c, &cl, &into_project).is_err());
+        let onto_board = WhiteboardMermaidArgs { mermaid: chart.into(), whiteboard_id: Some(flow.id), ..Default::default() };
+        assert!(whiteboard_from_mermaid(c, &cl, &onto_board).is_err());
         // Moving a task *into* a locked project is a write to it too.
         let loose = task(c, "Buy milk", None);
         assert!(task_update(c, &cl, &TaskUpdateArgs { project_id: Some(id), ..update_args(&loose) }).is_err());
@@ -889,6 +1412,164 @@ mod tests {
         let json = serde_json::to_value(brief).unwrap();
         assert!(json.get("createdAt").is_none(), "timestamps and sort orders are not worth the tokens");
         assert!(json.get("sortOrder").is_none());
+    }
+
+    /// `kern_project_setup` is the centrepiece, so this is the test that says
+    /// what "set up a project for the launch" actually produces.
+    #[test]
+    fn a_whole_project_arrives_in_one_call() {
+        let c = &mut db();
+        let cl = client(c, "write");
+        let args = ProjectSetupArgs {
+            name: "Website Redesign".into(),
+            description: Some("A new site by the spring.".into()),
+            start_date: Some("2030-03-01".into()),
+            target_offset: Some(30),
+            boards: vec![NewBoard {
+                name: "Build".into(),
+                columns: vec![
+                    NewColumn { name: "Ideas".into(), status: None },
+                    NewColumn { name: "Doing".into(), status: Some("in_progress".into()) },
+                ],
+            }],
+            milestones: vec![
+                NewMilestone { key: "draft".into(), title: "First draft".into(), offset_days: Some(14), ..Default::default() },
+                NewMilestone { key: "live".into(), title: "Live".into(), offset_days: Some(30), is_release: true, ..Default::default() },
+            ],
+            tasks: vec![
+                PlannedTask {
+                    title: "Wireframes".into(),
+                    due_offset: Some(2),
+                    labels: vec!["design".into()],
+                    milestone: Some("draft".into()),
+                    column: Some("doing".into()),
+                    subtasks: vec!["Home".into(), "Pricing".into()],
+                    ..Default::default()
+                },
+                PlannedTask { title: "Launch checks".into(), due_offset: Some(30), milestone: Some("live".into()), ..Default::default() },
+            ],
+            notes: vec![NewNote { title: "Brief".into(), content: "## Goals\n\n- Fewer clicks".into() }],
+        };
+        let out = project_setup(c, &cl, &args).unwrap();
+
+        assert_eq!(out.project.name, "Website Redesign");
+        assert_eq!(out.project.target_date.as_deref(), Some("2030-03-31"), "offsets count from the start date");
+        assert_eq!(out.milestones.iter().map(|m| m.title.as_str()).collect::<Vec<_>>(), ["First draft", "Live"]);
+        assert_eq!(out.milestones[0].target_date.as_deref(), Some("2030-03-15"));
+        assert_eq!(out.boards[0].columns.iter().map(|col| col.name.as_str()).collect::<Vec<_>>(), ["Ideas", "Doing"]);
+        assert_eq!(out.notes.len(), 1);
+        let wireframes = out.tasks.iter().find(|t| t.title == "Wireframes").unwrap();
+        assert_eq!(wireframes.due_date.as_deref(), Some("2030-03-03"));
+        assert_eq!(wireframes.subtasks.as_deref(), Some("0/2"), "the checklist came with it");
+        assert_eq!(wireframes.labels, vec!["design".to_string()]);
+        assert_eq!(wireframes.status, "in_progress", "placed in a column that means in progress");
+        assert_eq!(out.tasks.len(), 2, "the digest lists top-level tasks, not checklist steps");
+        // The milestones are real, and the tasks joined them.
+        let live = milestone_list(c, &cl, &ProjectIdArgs { project_id: out.project.id.clone() }).unwrap();
+        assert_eq!(live.iter().find(|m| m.title == "Live").unwrap().open_tasks, 1);
+    }
+
+    #[test]
+    fn a_setup_bigger_than_the_limit_is_refused_whole() {
+        let c = &mut db();
+        let cl = client(c, "write");
+        let args = ProjectSetupArgs {
+            name: "Everything".into(),
+            tasks: (0..=MAX_BATCH).map(|i| PlannedTask { title: format!("Task {i}"), ..Default::default() }).collect(),
+            ..Default::default()
+        };
+        assert!(project_setup(c, &cl, &args).is_err());
+        assert!(project_list(c, &cl, &ProjectListArgs::default()).unwrap().is_empty(), "no half-made project left behind");
+
+        // A failure partway through takes the whole project with it.
+        let bad = ProjectSetupArgs {
+            name: "Half a plan".into(),
+            start_date: Some("the third".into()),
+            tasks: vec![PlannedTask { title: "Fine".into(), ..Default::default() }],
+            ..Default::default()
+        };
+        assert!(project_setup(c, &cl, &bad).is_err());
+        assert!(project_list(c, &cl, &ProjectListArgs::default()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_allowlisted_assistant_cannot_create_a_project_to_work_in() {
+        let c = &mut db();
+        let mine = project(c, "Website Redesign");
+        let cl = client(c, "write");
+        let cl = clients::set_projects(c, &cl.id, &[mine]).unwrap();
+        let args = ProjectSetupArgs { name: "Somewhere else".into(), ..Default::default() };
+        assert!(project_setup(c, &cl, &args).is_err());
+        assert_eq!(project_list(c, &cl, &ProjectListArgs::default()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_flowchart_becomes_shapes_that_can_be_read_back() {
+        let c = &mut db();
+        let id = project(c, "Website Redesign");
+        let cl = client(c, "write");
+        let args = WhiteboardMermaidArgs {
+            mermaid: "flowchart LR\n  A([Start]) -->|Yes| B{Ready?}\n  B --> C[(Store)]".into(),
+            name: Some("Flow".into()),
+            project_id: Some(id.clone()),
+            ..Default::default()
+        };
+        let out = whiteboard_from_mermaid(c, &cl, &args).unwrap();
+        assert_eq!((out.shapes, out.connectors), (3, 2));
+        assert_eq!(out.name, "Flow");
+
+        let back = whiteboard_to_mermaid(c, &cl, &IdArgs { id: out.id.clone() }).unwrap();
+        assert_eq!((back.included, back.skipped), (3, 0));
+        assert!(back.mermaid.contains("([\"Start\"])"), "the shapes survived: {}", back.mermaid);
+        assert!(back.mermaid.contains("{\"Ready?\"}"));
+        assert!(back.mermaid.contains("|\"Yes\"|"), "so did the connector's label");
+        assert!(whiteboard_list(c, &cl, &BoardListArgs { project_id: Some(id) }).unwrap().iter().any(|w| w.objects == 3));
+
+        // A second chart is added below the first rather than over it.
+        let more = WhiteboardMermaidArgs {
+            mermaid: "flowchart TD\n D[Later]".into(),
+            whiteboard_id: Some(out.id.clone()),
+            ..Default::default()
+        };
+        assert_eq!(whiteboard_from_mermaid(c, &cl, &more).unwrap().shapes, 1);
+        assert_eq!(whiteboard_to_mermaid(c, &cl, &IdArgs { id: out.id.clone() }).unwrap().included, 4);
+        // Unless replacing is asked for, which it has to be.
+        let replace = WhiteboardMermaidArgs { replace: true, ..more };
+        whiteboard_from_mermaid(c, &cl, &replace).unwrap();
+        assert_eq!(whiteboard_to_mermaid(c, &cl, &IdArgs { id: out.id }).unwrap().included, 1);
+
+        // Anything that isn't a flowchart is explained, not half-imported.
+        let wrong = WhiteboardMermaidArgs { mermaid: "sequenceDiagram\n A->>B: hi".into(), ..Default::default() };
+        let e = whiteboard_from_mermaid(c, &cl, &wrong).unwrap_err().to_string();
+        assert!(e.contains("sequenceDiagram"), "{e}");
+    }
+
+    #[test]
+    fn milestones_and_labels_are_created_once_and_counted() {
+        let c = &mut db();
+        let id = project(c, "Website Redesign");
+        let cl = client(c, "write");
+        let made = milestone_create(
+            c,
+            &cl,
+            &MilestoneCreateArgs {
+                project_id: id.clone(),
+                title: "Live".into(),
+                target_date: Some("2030-03-31".into()),
+                is_release: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(made.status, "planned");
+        assert_eq!(made.target_date.as_deref(), Some("2030-03-31"));
+        assert!(milestone_list(c, &cl, &ProjectIdArgs { project_id: id }).unwrap().iter().any(|m| m.id == made.id));
+        assert!(milestone_create(c, &cl, &MilestoneCreateArgs { title: "Live".into(), ..Default::default() }).is_err());
+
+        let label = label_create(c, &cl, &LabelCreateArgs { name: "Design".into(), color: None }).unwrap();
+        // Asking again returns the same label rather than a near-duplicate.
+        assert_eq!(label_create(c, &cl, &LabelCreateArgs { name: "design".into(), color: None }).unwrap().id, label.id);
+        assert_eq!(label_list(c, &cl).unwrap().len(), 1);
     }
 
     #[test]

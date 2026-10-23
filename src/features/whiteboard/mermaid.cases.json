@@ -1,0 +1,273 @@
+{
+  "about": [
+    "Mermaid flowchart cases, shared by two implementations of the same thing:",
+    "src/features/whiteboard/mermaid.ts (the whiteboard's own) and",
+    "src-tauri/src/domain/mcp/mermaid.rs (the one an assistant calls through MCP).",
+    "Both read this file in their tests, so the two cannot quietly drift apart.",
+    "A case added here must pass in both; a case only one can satisfy is a bug",
+    "in the other."
+  ],
+  "parse": [
+    {
+      "name": "reads the direction, labels and shapes",
+      "text": "flowchart LR\n  A([Start]) --> B{Ready?}\n  B --> C[(Store)]\n  B --> D[/Report/]\n  C --> E((Done))",
+      "direction": "LR",
+      "nodes": [
+        { "key": "A", "label": "Start", "shape": "stadium" },
+        { "key": "B", "label": "Ready?", "shape": "diamond" },
+        { "key": "C", "label": "Store", "shape": "cylinder" },
+        { "key": "D", "label": "Report", "shape": "parallelogram" },
+        { "key": "E", "label": "Done", "shape": "circle" }
+      ],
+      "edges": [
+        { "from": "A", "to": "B", "label": null, "line": "solid", "arrow": true, "both": false },
+        { "from": "B", "to": "C", "label": null, "line": "solid", "arrow": true, "both": false },
+        { "from": "B", "to": "D", "label": null, "line": "solid", "arrow": true, "both": false },
+        { "from": "C", "to": "E", "label": null, "line": "solid", "arrow": true, "both": false }
+      ]
+    },
+    {
+      "name": "treats TD as top-to-bottom",
+      "text": "flowchart TD\n A --> B",
+      "direction": "TB",
+      "nodes": [
+        { "key": "A", "label": "A", "shape": "rect" },
+        { "key": "B", "label": "B", "shape": "rect" }
+      ],
+      "edges": [{ "from": "A", "to": "B", "label": null, "line": "solid", "arrow": true, "both": false }]
+    },
+    {
+      "name": "defaults a bare graph to top-to-bottom",
+      "text": "graph\n A --> B",
+      "direction": "TB",
+      "nodes": [
+        { "key": "A", "label": "A", "shape": "rect" },
+        { "key": "B", "label": "B", "shape": "rect" }
+      ],
+      "edges": [{ "from": "A", "to": "B", "label": null, "line": "solid", "arrow": true, "both": false }]
+    },
+    {
+      "name": "reads a bottom-to-top graph",
+      "text": "graph BT\n A --> B",
+      "direction": "BT",
+      "nodes": [
+        { "key": "A", "label": "A", "shape": "rect" },
+        { "key": "B", "label": "B", "shape": "rect" }
+      ],
+      "edges": [{ "from": "A", "to": "B", "label": null, "line": "solid", "arrow": true, "both": false }]
+    },
+    {
+      "name": "reads both label forms",
+      "text": "flowchart TD\n  A{Ok?} -->|Yes| B[Ship]\n  A -- No --> C[Stop]",
+      "direction": "TB",
+      "nodes": [
+        { "key": "A", "label": "Ok?", "shape": "diamond" },
+        { "key": "B", "label": "Ship", "shape": "rect" },
+        { "key": "C", "label": "Stop", "shape": "rect" }
+      ],
+      "edges": [
+        { "from": "A", "to": "B", "label": "Yes", "line": "solid", "arrow": true, "both": false },
+        { "from": "A", "to": "C", "label": "No", "line": "solid", "arrow": true, "both": false }
+      ]
+    },
+    {
+      "name": "chains and fans out",
+      "text": "flowchart TD\n A --> B --> C\n A --> D & E",
+      "direction": "TB",
+      "nodes": [
+        { "key": "A", "label": "A", "shape": "rect" },
+        { "key": "B", "label": "B", "shape": "rect" },
+        { "key": "C", "label": "C", "shape": "rect" },
+        { "key": "D", "label": "D", "shape": "rect" },
+        { "key": "E", "label": "E", "shape": "rect" }
+      ],
+      "edges": [
+        { "from": "A", "to": "B", "label": null, "line": "solid", "arrow": true, "both": false },
+        { "from": "B", "to": "C", "label": null, "line": "solid", "arrow": true, "both": false },
+        { "from": "A", "to": "D", "label": null, "line": "solid", "arrow": true, "both": false },
+        { "from": "A", "to": "E", "label": null, "line": "solid", "arrow": true, "both": false }
+      ]
+    },
+    {
+      "name": "carries line style and arrowheads",
+      "text": "flowchart TD\n A -.-> B\n B --- C\n C <--> D\n D ==> E",
+      "direction": "TB",
+      "nodes": [
+        { "key": "A", "label": "A", "shape": "rect" },
+        { "key": "B", "label": "B", "shape": "rect" },
+        { "key": "C", "label": "C", "shape": "rect" },
+        { "key": "D", "label": "D", "shape": "rect" },
+        { "key": "E", "label": "E", "shape": "rect" }
+      ],
+      "edges": [
+        { "from": "A", "to": "B", "label": null, "line": "dashed", "arrow": true, "both": false },
+        { "from": "B", "to": "C", "label": null, "line": "solid", "arrow": false, "both": false },
+        { "from": "C", "to": "D", "label": null, "line": "solid", "arrow": true, "both": true },
+        { "from": "D", "to": "E", "label": null, "line": "thick", "arrow": true, "both": false }
+      ]
+    },
+    {
+      "name": "keeps the richest mention of a key",
+      "text": "flowchart TD\n A --> B\n A[Start] --> C",
+      "direction": "TB",
+      "nodes": [
+        { "key": "A", "label": "Start", "shape": "rect" },
+        { "key": "B", "label": "B", "shape": "rect" },
+        { "key": "C", "label": "C", "shape": "rect" }
+      ],
+      "edges": [
+        { "from": "A", "to": "B", "label": null, "line": "solid", "arrow": true, "both": false },
+        { "from": "A", "to": "C", "label": null, "line": "solid", "arrow": true, "both": false }
+      ]
+    },
+    {
+      "name": "skips directives, comments and subgraph scaffolding",
+      "text": "flowchart TD\n  %% a comment\n  subgraph one\n  A --> B\n  end\n  classDef big fill:#fff\n  style A stroke:#000",
+      "direction": "TB",
+      "nodes": [
+        { "key": "A", "label": "A", "shape": "rect" },
+        { "key": "B", "label": "B", "shape": "rect" }
+      ],
+      "edges": [{ "from": "A", "to": "B", "label": null, "line": "solid", "arrow": true, "both": false }]
+    },
+    {
+      "name": "quotes and line breaks survive",
+      "text": "flowchart TD\n A[\"Pick a<br/>plan\"] --> B",
+      "direction": "TB",
+      "nodes": [
+        { "key": "A", "label": "Pick a\nplan", "shape": "rect" },
+        { "key": "B", "label": "B", "shape": "rect" }
+      ],
+      "edges": [{ "from": "A", "to": "B", "label": null, "line": "solid", "arrow": true, "both": false }]
+    }
+  ],
+  "errors": [
+    {
+      "name": "another kind of diagram is named, not half-imported",
+      "text": "sequenceDiagram\n A->>B: hi",
+      "error": "Kern imports Mermaid flowcharts; this is a sequenceDiagram diagram."
+    },
+    { "name": "nothing at all", "text": "   ", "error": "There is nothing to import." },
+    { "name": "a declaration with no diagram", "text": "flowchart TD", "error": "No boxes or arrows were found." }
+  ],
+  "toMermaid": [
+    {
+      "name": "writes boxes in reading order with their brackets",
+      "nodes": [
+        { "id": "b", "type": "shape", "y": 200, "data": { "shape": "diamond", "label": "Ready?" } },
+        { "id": "a", "type": "shape", "y": 0, "data": { "shape": "stadium", "label": "Start" } }
+      ],
+      "edges": [{ "id": "e1", "source": "a", "target": "b", "data": { "label": "go" } }],
+      "text": "flowchart TB\n  A([\"Start\"])\n  B{\"Ready?\"}\n  A -->|\"go\"| B\n",
+      "included": 2,
+      "skipped": 0
+    },
+    {
+      "name": "writes a dashed connector",
+      "nodes": [
+        { "id": "a", "type": "shape", "y": 0, "data": { "shape": "rect", "label": "A" } },
+        { "id": "b", "type": "shape", "y": 100, "data": { "shape": "rect", "label": "B" } }
+      ],
+      "edges": [{ "id": "e", "source": "a", "target": "b", "data": { "line": "dashed" } }],
+      "text": "flowchart TB\n  A[\"A\"]\n  B[\"B\"]\n  A -.-> B\n",
+      "included": 2,
+      "skipped": 0
+    },
+    {
+      "name": "writes a headless connector",
+      "nodes": [
+        { "id": "a", "type": "shape", "y": 0, "data": { "shape": "rect", "label": "A" } },
+        { "id": "b", "type": "shape", "y": 100, "data": { "shape": "rect", "label": "B" } }
+      ],
+      "edges": [{ "id": "e", "source": "a", "target": "b", "data": { "directed": false } }],
+      "text": "flowchart TB\n  A[\"A\"]\n  B[\"B\"]\n  A --- B\n",
+      "included": 2,
+      "skipped": 0
+    },
+    {
+      "name": "writes a headless dotted connector",
+      "nodes": [
+        { "id": "a", "type": "shape", "y": 0, "data": { "shape": "rect", "label": "A" } },
+        { "id": "b", "type": "shape", "y": 100, "data": { "shape": "rect", "label": "B" } }
+      ],
+      "edges": [{ "id": "e", "source": "a", "target": "b", "data": { "directed": false, "line": "dotted" } }],
+      "text": "flowchart TB\n  A[\"A\"]\n  B[\"B\"]\n  A -.- B\n",
+      "included": 2,
+      "skipped": 0
+    },
+    {
+      "name": "writes a two-way connector",
+      "nodes": [
+        { "id": "a", "type": "shape", "y": 0, "data": { "shape": "rect", "label": "A" } },
+        { "id": "b", "type": "shape", "y": 100, "data": { "shape": "rect", "label": "B" } }
+      ],
+      "edges": [{ "id": "e", "source": "a", "target": "b", "data": { "both": true } }],
+      "text": "flowchart TB\n  A[\"A\"]\n  B[\"B\"]\n  A <--> B\n",
+      "included": 2,
+      "skipped": 0
+    },
+    {
+      "name": "takes the label from a sticky, a text box or a task card",
+      "nodes": [
+        { "id": "a", "type": "sticky", "y": 0, "data": { "text": "Idea" } },
+        { "id": "b", "type": "task", "y": 100, "data": { "title": "Do it" } },
+        { "id": "c", "type": "text", "y": 200, "data": { "text": "  " } }
+      ],
+      "edges": [],
+      "text": "flowchart TB\n  A[\"Idea\"]\n  B[\"Do it\"]\n  C[\"Untitled\"]\n",
+      "included": 3,
+      "skipped": 0
+    },
+    {
+      "name": "reports what has no Mermaid equivalent instead of inventing one",
+      "nodes": [
+        { "id": "a", "type": "shape", "y": 0, "data": { "shape": "rect", "label": "A" } },
+        { "id": "l", "type": "shape", "y": 10, "data": { "shape": "arrow", "label": "" } },
+        { "id": "d", "type": "draw", "y": 20, "data": { "points": [0, 0, 1, 1] } }
+      ],
+      "edges": [],
+      "text": "flowchart TB\n  A[\"A\"]\n",
+      "included": 1,
+      "skipped": 2
+    },
+    {
+      "name": "escapes quotes and line breaks in a label",
+      "nodes": [{ "id": "a", "type": "shape", "y": 0, "data": { "shape": "rect", "label": "Say \"hi\"\nthen go" } }],
+      "edges": [],
+      "text": "flowchart TB\n  A[\"Say &quot;hi&quot;<br/>then go\"]\n",
+      "included": 1,
+      "skipped": 0
+    },
+    {
+      "name": "writes a left-to-right chart when asked",
+      "direction": "LR",
+      "nodes": [{ "id": "a", "type": "shape", "y": 0, "data": { "shape": "rect", "label": "A" } }],
+      "edges": [],
+      "text": "flowchart LR\n  A[\"A\"]\n",
+      "included": 1,
+      "skipped": 0
+    }
+  ],
+  "roundTrip": [
+    {
+      "name": "shapes and labels survive text, objects and text again",
+      "text": "flowchart TD\n A([Start]) -->|Yes| B{Ready?}\n B --> C[(Store)]",
+      "nodes": [
+        { "label": "Start", "shape": "stadium" },
+        { "label": "Ready?", "shape": "diamond" },
+        { "label": "Store", "shape": "cylinder" }
+      ],
+      "edges": [{ "label": "Yes" }, { "label": null }]
+    },
+    {
+      "name": "a dashed, headless and two-way chart survives",
+      "text": "flowchart LR\n A[One] -.- B[Two]\n B <--> C[Three]",
+      "nodes": [
+        { "label": "One", "shape": "rect" },
+        { "label": "Two", "shape": "rect" },
+        { "label": "Three", "shape": "rect" }
+      ],
+      "edges": [{ "label": null }, { "label": null }]
+    }
+  ]
+}

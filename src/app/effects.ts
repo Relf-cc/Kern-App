@@ -180,6 +180,10 @@ const MCP_WROTE: Record<string, (detail: string) => string> = {
   kern_note_create: () => "wrote a note",
   kern_note_update: () => "changed a note",
   kern_board_create: () => "created a board",
+  kern_project_setup: (d) => `set up “${d}”`,
+  kern_milestone_create: (d) => `added the milestone “${d}”`,
+  kern_label_create: (d) => `created the label “${d}”`,
+  kern_whiteboard_from_mermaid: () => "drew a flowchart",
 };
 
 /** Listens for backend events and handles the morning/evening prompts. */
@@ -223,7 +227,7 @@ export function useBackendEvents() {
       // applied event - refresh everything it could have touched, and say so.
       listen<{ client: string; tool: string; detail: string }>("kern://mcp-applied", (e) => {
         invalidateTasks();
-        invalidate("notes", "note", "boards", "mcp");
+        invalidate("notes", "note", "boards", "whiteboards", "whiteboard", "mcp");
         const wrote = MCP_WROTE[e.payload.tool]?.(e.payload.detail) ?? "changed something";
         toast(`${e.payload.client} ${wrote}`);
       }),

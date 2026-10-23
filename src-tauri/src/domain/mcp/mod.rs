@@ -20,11 +20,13 @@
 //! logic and reads no data.
 //!
 //! Layout: `clients` (who may connect), `policy` (may they do this?),
-//! `tools` (what they can do), `server` (the rmcp wiring), `audit` (what
-//! they did).
+//! `tools` (what they can do), `server` (the rmcp wiring, the resources and
+//! the prompts), `mermaid` (flowchart text ↔ whiteboard objects), `audit`
+//! (what they did).
 
 pub mod audit;
 pub mod clients;
+pub mod mermaid;
 pub mod policy;
 pub mod server;
 pub mod tools;
@@ -52,7 +54,10 @@ days, written YYYY-MM-DD; times are HH:MM. Notes are Markdown. Deleting moves \
 items to Kern's Trash, where the user can restore them.
 
 Prefer one call with a list over many calls with one item each, and reuse the \
-project and label names already in use rather than inventing near-duplicates.";
+project and label names already in use rather than inventing near-duplicates. \
+A new project and everything in it is one kern_project_setup call, not twenty. \
+A flowchart goes in as Mermaid text through kern_whiteboard_from_mermaid and \
+becomes real shapes the user can move and edit.";
 
 // ------------------------------------------------------------ the endpoint
 

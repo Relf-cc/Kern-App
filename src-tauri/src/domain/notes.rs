@@ -102,35 +102,39 @@ pub fn create_note(conn: &Connection, title: &str, content: &str, project_id: Op
     get_note(conn, &id)
 }
 
+/// Notes in a project, or all of them, newest first. Notes belonging to a
+/// locked project are left out by `readable_sql`.
+pub fn list(conn: &Connection, project_id: Option<&str>, include_archived: bool) -> AppResult<Vec<NoteMeta>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, title, substr(content, 1, 600), project_id, pinned, archived_at, created_at, updated_at FROM notes
+         WHERE deleted_at IS NULL AND (?1 IS NULL OR project_id = ?1) AND (?2 = 1 OR archived_at IS NULL)
+           AND {}
+         ORDER BY pinned DESC, updated_at DESC",
+        passkeys::readable_sql(conn, "project_id")
+    ))?;
+    let rows = stmt.query_map(params![project_id, include_archived as i64], |r| {
+        let body: String = r.get(2)?;
+        Ok(NoteMeta {
+            id: r.get(0)?,
+            title: r.get(1)?,
+            excerpt: excerpt(&body, 160),
+            project_id: r.get(3)?,
+            pinned: r.get::<_, i64>(4)? != 0,
+            archived_at: r.get(5)?,
+            created_at: r.get(6)?,
+            updated_at: r.get(7)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
 #[tauri::command]
 pub fn notes_list(
     state: State<AppState>,
     project_id: Option<String>,
     include_archived: Option<bool>,
 ) -> AppResult<Vec<NoteMeta>> {
-    state.with(|c| {
-        let mut stmt = c.prepare(&format!(
-            "SELECT id, title, substr(content, 1, 600), project_id, pinned, archived_at, created_at, updated_at FROM notes
-             WHERE deleted_at IS NULL AND (?1 IS NULL OR project_id = ?1) AND (?2 = 1 OR archived_at IS NULL)
-               AND {}
-             ORDER BY pinned DESC, updated_at DESC",
-            passkeys::readable_sql(c, "project_id")
-        ))?;
-        let rows = stmt.query_map(params![project_id, include_archived.unwrap_or(false) as i64], |r| {
-            let body: String = r.get(2)?;
-            Ok(NoteMeta {
-                id: r.get(0)?,
-                title: r.get(1)?,
-                excerpt: excerpt(&body, 160),
-                project_id: r.get(3)?,
-                pinned: r.get::<_, i64>(4)? != 0,
-                archived_at: r.get(5)?,
-                created_at: r.get(6)?,
-                updated_at: r.get(7)?,
-            })
-        })?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
-    })
+    state.with(|c| list(c, project_id.as_deref(), include_archived.unwrap_or(false)))
 }
 
 #[tauri::command]

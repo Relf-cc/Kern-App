@@ -136,6 +136,20 @@ pub fn edges(conn: &Connection, id: &str) -> AppResult<Vec<WbEdge>> {
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+/// The whiteboards in a project, or all of them. Locked projects are left out
+/// by `readable_sql`, the same gate the rest of the app uses.
+pub fn list(conn: &Connection, project_id: Option<&str>) -> AppResult<Vec<Whiteboard>> {
+    let mut stmt = conn.prepare(&format!(
+        "{SELECT} LEFT JOIN projects p ON p.id = w.project_id
+         WHERE w.deleted_at IS NULL AND (w.project_id IS NULL OR p.deleted_at IS NULL) AND (?1 IS NULL OR w.project_id = ?1)
+           AND {}
+         ORDER BY w.pinned DESC, w.sort_order, w.created_at",
+        passkeys::readable_sql(conn, "w.project_id")
+    ))?;
+    let rows = stmt.query_map([project_id], map)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
 pub fn create(conn: &Connection, project_id: Option<&str>, name: &str) -> AppResult<Whiteboard> {
     let name = name.trim();
     if name.is_empty() {
@@ -324,17 +338,7 @@ pub fn duplicate(conn: &Connection, id: &str, project_id: Option<&str>, rename: 
 
 #[tauri::command]
 pub fn whiteboards_list(state: State<AppState>, project_id: Option<String>) -> AppResult<Vec<Whiteboard>> {
-    state.with(|c| {
-        let mut stmt = c.prepare(&format!(
-            "{SELECT} LEFT JOIN projects p ON p.id = w.project_id
-             WHERE w.deleted_at IS NULL AND (w.project_id IS NULL OR p.deleted_at IS NULL) AND (?1 IS NULL OR w.project_id = ?1)
-               AND {}
-             ORDER BY w.pinned DESC, w.sort_order, w.created_at",
-            passkeys::readable_sql(c, "w.project_id")
-        ))?;
-        let rows = stmt.query_map([project_id], map)?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
-    })
+    state.with(|c| list(c, project_id.as_deref()))
 }
 
 #[tauri::command]

@@ -4,7 +4,10 @@ How Kern becomes a Model Context Protocol server, so an AI client signed in
 with your own subscription — Claude Desktop, Claude Code — can create tasks,
 boards, flowcharts, notes and whole projects in Kern.
 
-Status: **plan**. Nothing here is built yet.
+Status: **phases 0–2 built** — the server runs in-app over a pipe, the
+bridge ships beside it, and the tool surface below is live. Phase 3 (approval
+dialog, revert-batch, activity UI, `.mcpb`, docs) is still ahead; see
+[§9](#9-phasing).
 
 ## The one thing to get straight first
 
@@ -121,10 +124,11 @@ a mirror. Prefer one composite tool over five round trips.
 | `kern_today` | `daily::rundown_data` | read |
 | `kern_project_list` / `_get` | `projects::*` | read |
 | **`kern_project_setup`** | `templates::create_project_from` | write |
-| `kern_project_update` | `projects::update` | write |
+| `kern_project_update` | `projects::update` | write *(not built yet)* |
 | `kern_task_search` | `tasks::query_tasks` | read |
 | `kern_task_create` (accepts an array, with subtasks) | `tasks::create_task` | write |
-| `kern_task_update` / `_complete` / `_move` | `tasks::*` | write |
+| `kern_task_update` / `_complete` | `tasks::*` | write |
+| `kern_task_move` | `tasks::*` | write *(not built yet)* |
 | `kern_task_delete` | `tasks_delete` → **Trash** | write |
 | `kern_board_list` / `_create` | `boards::*` | write |
 | `kern_note_create` / `_update` / `_get` | `notes::*` | write |
@@ -141,7 +145,13 @@ and notes — and `create_project_from(&tx, &doc, &input)` instantiates the whol
 thing in one transaction. Expose `ProjectDoc` as the tool's input schema and
 "set up a project for the Q1 launch" becomes a single atomic call producing a
 project, a board, four columns, three milestones and twenty scheduled tasks.
-Nothing new to write: it exposes the engine that already backs templates.
+What it took was not the engine but the schema: `ProjectDoc` is mirrored in
+`tools.rs` as model-facing structs (`ProjectSetupArgs`, `NewBoard`,
+`NewMilestone`, `PlannedTask`, `NewNote`) rather than derived straight from the
+template type, so a field Kern adds for its own templates can't silently become
+something an assistant may set, and each field can say what it means to someone
+who has never seen Kern. Subtasks are a list of titles rather than nested tasks,
+which is what a checklist is and keeps the schema flat.
 
 Notes are plain Markdown, so "detailed notes" needs no conversion layer — the
 model's best output format is already the storage format.
@@ -165,22 +175,21 @@ applies on top of it, and that isn't a setting.
 Mermaid is how flowcharts travel between an LLM and anything else, and the app
 already committed to that: `src/features/whiteboard/mermaid.ts` parses
 `flowchart`/`graph`, lays the nodes out and emits Kern nodes and edges, with
-the 11 `ShapeKind`s mapped onto Mermaid's brackets, and 201 lines of tests.
+the 11 `ShapeKind`s mapped onto Mermaid's brackets, under test.
 
-It is TypeScript, and the MCP handler is Rust. Two honest options:
+It is TypeScript, and the MCP handler is Rust. The alternative — round-tripping
+the conversion through the webview — would make a tool call depend on an open
+window and buy nothing, so `parseMermaid`, `layoutChart`, `chartToScene` and
+`toMermaid` are **ported to `domain/mcp/mermaid.rs`**: pure functions, no React,
+no canvas, no regex crate (the patterns are hand-rolled, which is most of the
+port's bulk).
 
-1. **Port `parseMermaid` + `layoutChart` + `chartToScene` to
-   `domain/mcp/mermaid.rs`** (~364 lines of pure functions, no React, no
-   canvas — the file was written to be portable). Recommended.
-2. Round-trip the conversion through the webview. Possible, since the app must
-   be running anyway, but it makes a tool call depend on the window and buys
-   nothing.
-
-Port it, and **extract the cases from `mermaid.test.ts` into a shared JSON
-fixture** that both the Vitest suite and a `#[cfg(test)]` module read. Two
-implementations that cannot silently drift are worth the hour. The port also
-gives `toMermaid` on the Rust side, so `kern_whiteboard_to_mermaid` lets the
-model read a board drawn by hand.
+Two implementations of one parser drift unless something stops them, so the
+cases live in **`src/features/whiteboard/mermaid.cases.json`**, which both test
+suites read — Vitest by import, Rust by `include_str!`. A case added there must
+pass in both; a case only one of them satisfies is a bug in the other. The port
+also gives `toMermaid` on the Rust side, so `kern_whiteboard_to_mermaid` lets
+the model read a board drawn by hand.
 
 ## 6. Safety model
 
@@ -251,13 +260,17 @@ New keys: `mcp.enabled`, `mcp.confirmWrites`, `mcp.allowedProjects`,
 
 ## 9. Phasing
 
-| Phase | Scope | Est. |
-| --- | --- | --- |
-| **0 — spike** | rmcp in-app over a pipe, bridge binary, one tool (`kern_task_create`), driven from Claude Code. Proves the MSRV bump, the pipe and the threading. | ½ day |
-| **1 — core** | `policy.rs`, audit, migration, settings tab, read tools plus task/note/board writes, Claude Desktop config writer. | 2–3 days |
-| **2 — the asks** | `kern_project_setup` via `ProjectDoc`, mermaid port + shared fixture, milestones and labels, resources, prompts. | 2 days |
-| **3 — polish** | approval dialog, revert-batch, activity UI, `.mcpb`, DEVELOPMENT.md and README. | 1–2 days |
-| **4 — optional** | HTTP transport (+axum) for other clients; Kern as MCP client; Appendix B. | — |
+| Phase | Scope | Est. | |
+| --- | --- | --- | --- |
+| **0 — spike** | rmcp in-app over a pipe, bridge binary, one tool (`kern_task_create`), driven from Claude Code. Proves the MSRV bump, the pipe and the threading. | ½ day | done |
+| **1 — core** | `policy.rs`, audit, migration, settings tab, read tools plus task/note/board writes, Claude Desktop config writer. | 2–3 days | done |
+| **2 — the asks** | `kern_project_setup` via `ProjectDoc`, mermaid port + shared fixture, milestones and labels, resources, prompts. | 2 days | done |
+| **3 — polish** | approval dialog, revert-batch, activity UI, `.mcpb`, DEVELOPMENT.md and README. | 1–2 days | next |
+| **4 — optional** | HTTP transport (+axum) for other clients; Kern as MCP client; Appendix B. | — | |
+
+Left over from §4 after phase 2: `kern_project_update` and `kern_task_move`,
+and `mcp.confirmWrites` / `mcp.allowedProjects`, which belong with the approval
+dialog in phase 3.
 
 ## 10. Risks
 
