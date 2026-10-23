@@ -1,6 +1,8 @@
 node_modules
 dist
 src-tauri/target
+# Built by scripts/mcp-bundle.mjs before each tauri build.
+src-tauri/binaries
 src-tauri/gen/schemas
 *.log
 .DS_Store

@@ -35,6 +35,11 @@ collaborate with others in shared workspaces, in real time.
   and sync GitHub issues with your tasks. None of this appears unless you link code.
 - **Optional AI.** Bring your own API key for extras like a "catch me up" summary
   of a project, which shows exactly what would be sent before anything leaves your computer.
+- **Optional AI assistants.** Let Claude Desktop or Claude Code connect to Kern
+  on your own subscription — no API key — and create tasks, notes, boards, whole
+  projects and flowcharts in it. It's off until you turn it on, nothing connects
+  until you approve it by name, Kern can ask you before anything is written, and
+  anything an assistant changes can be put back in one go.
 
 ## Install
 
@@ -121,7 +126,14 @@ linked the folder.
   needed if you choose Kern Cloud.
 - **Backups happen automatically**, and **Settings** can export everything to
   ordinary files (JSON, Markdown and CSV) whenever you like.
-- **Deleted items go to Trash first**, so you can restore them.
+- **Deleted items go to Trash first**, so you can restore them — including
+  anything an AI assistant deletes.
+- **An AI assistant only reaches what you allow.** The connection is off by
+  default and is a local pipe only your user account can open, so there's no
+  port and nothing on the network. Each assistant is read-only until you say
+  otherwise, can be held to the projects you pick, never sees projects locked
+  with a passkey, and is never offered your files, terminal, keys or settings.
+  Every call it makes is listed in **Settings → API → Assistants**.
 - **Passwords and API keys** are kept in your system's secure storage (Windows
   Credential Manager, or GNOME Keyring / KWallet on Linux), never in Kern's own files.
 

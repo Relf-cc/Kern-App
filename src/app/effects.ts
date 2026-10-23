@@ -14,7 +14,7 @@ import { useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
 import { navigate, useRouter } from "@/stores/router";
 import { useUndo } from "@/stores/undo";
-import { api, isTauri } from "@/lib/ipc";
+import { api, describeError, isTauri } from "@/lib/ipc";
 import { invalidate, invalidateTasks, queryClient } from "@/lib/query";
 import { comboFromEvent, isTextInput, resolveBindings } from "@/lib/shortcuts";
 import { todayStr } from "@/lib/dates";
@@ -26,6 +26,8 @@ import { openNewTask } from "@/features/tasks/creation";
 import { useSessions } from "@/features/sessions/store";
 import { confirm } from "@/components/ui/Dialog";
 import { openTask } from "@/features/tasks/menu";
+import { askMcpConfirm, closeMcpConfirm } from "@/features/ai/McpApproval";
+import type { McpConfirmRequest } from "@/lib/types";
 
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const prefersDark = () => window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -167,6 +169,15 @@ async function maybePromptBriefing() {
   else useUi.getState().set({ briefingPrompt: "morning" });
 }
 
+/** "Revert" on an assistant's toast: a batch is one tool call's audit row. */
+async function revertMcpBatch(batch: number) {
+  try {
+    toast(await api.mcp.revert(batch));
+  } catch (e) {
+    toastError(describeError(e, "Couldn't put that back."));
+  }
+}
+
 /**
  * What an assistant's write is called in the toast. The audit detail is a
  * count for the batch tools ("6 tasks") and an id otherwise, so only the
@@ -175,12 +186,14 @@ async function maybePromptBriefing() {
 const MCP_WROTE: Record<string, (detail: string) => string> = {
   kern_task_create: (d) => `created ${d}`,
   kern_task_update: () => "changed a task",
+  kern_task_move: (d) => `moved ${d}`,
   kern_task_complete: (d) => `completed ${d}`,
   kern_task_delete: (d) => `moved ${d} to Trash`,
   kern_note_create: () => "wrote a note",
   kern_note_update: () => "changed a note",
   kern_board_create: () => "created a board",
   kern_project_setup: (d) => `set up “${d}”`,
+  kern_project_update: () => "changed a project",
   kern_milestone_create: (d) => `added the milestone “${d}”`,
   kern_label_create: (d) => `created the label “${d}”`,
   kern_whiteboard_from_mermaid: () => "drew a flowchart",
@@ -225,11 +238,23 @@ export function useBackendEvents() {
       listen("kern://calendar-updated", () => void queryClient.invalidateQueries({ queryKey: ["calendar"] })),
       // An assistant (MCP) changed something: the same shape as cloud's
       // applied event - refresh everything it could have touched, and say so.
-      listen<{ client: string; tool: string; detail: string }>("kern://mcp-applied", (e) => {
+      listen<{ client: string; tool: string; detail: string; batch: number | null }>("kern://mcp-applied", (e) => {
         invalidateTasks();
         invalidate("notes", "note", "boards", "whiteboards", "whiteboard", "mcp");
         const wrote = MCP_WROTE[e.payload.tool]?.(e.payload.detail) ?? "changed something";
-        toast(`${e.payload.client} ${wrote}`);
+        // One call is one batch, so the toast can offer the whole thing back.
+        const batch = e.payload.batch;
+        toast(`${e.payload.client} ${wrote}`, {
+          action: batch ? { label: "Revert", run: () => void revertMcpBatch(batch) } : undefined,
+          duration: batch ? 8000 : undefined,
+        });
+      }),
+      // A write is waiting on an answer (`mcp.confirmWrites`).
+      listen<McpConfirmRequest>("kern://mcp-confirm", (e) => askMcpConfirm(e.payload)),
+      listen<{ id: string }>("kern://mcp-confirm-done", (e) => closeMcpConfirm(e.payload.id)),
+      listen("kern://mcp-reverted", () => {
+        invalidateTasks();
+        invalidate("notes", "note", "boards", "whiteboards", "whiteboard", "projects", "project", "mcp", "trash");
       }),
       listen<{ id: string; name: string }>("kern://mcp-pending", (e) => {
         toast(`${e.payload.name} wants to connect to Kern`, {

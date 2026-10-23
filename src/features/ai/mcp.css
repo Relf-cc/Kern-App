@@ -3,8 +3,9 @@
  * @Date 2026-10-22
  */
 
-/* Settings → API → Assistants. The status pill and the activity list; the
-   rest of the tab uses the shared settings rows. */
+/* Settings → API → Assistants. The status pill, the activity list and the
+   "wants to change something" dialog; the rest of the tab uses the shared
+   settings rows. */
 
 .mcp-status {
   display: inline-flex;
@@ -53,7 +54,7 @@
 }
 .mcp-audit li {
   display: grid;
-  grid-template-columns: 74px 120px 150px 1fr;
+  grid-template-columns: 74px 120px 150px 1fr auto;
   gap: 10px;
   align-items: baseline;
   padding: 6px 10px;
@@ -84,8 +85,41 @@
   margin: 8px 0 0;
 }
 
+.mcp-audit li[data-reverted="true"] {
+  opacity: 0.6;
+}
+.mcp-audit li[data-reverted="true"] .mcp-audit__tool {
+  text-decoration: line-through;
+}
+
+/* Only there to hold the row's height while nothing can be reverted. */
+.mcp-audit__revert {
+  min-width: 56px;
+  display: flex;
+  justify-content: flex-end;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* The approval dialog. */
+.mcp-ask__tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.mcp-ask__clock {
+  margin-right: auto;
+  font-size: var(--fs-sm);
+}
+
 @media (max-width: 720px) {
   .mcp-audit li {
-    grid-template-columns: 74px 1fr;
+    grid-template-columns: 74px 1fr auto;
   }
 }

@@ -4,10 +4,11 @@ How Kern becomes a Model Context Protocol server, so an AI client signed in
 with your own subscription — Claude Desktop, Claude Code — can create tasks,
 boards, flowcharts, notes and whole projects in Kern.
 
-Status: **phases 0–2 built** — the server runs in-app over a pipe, the
-bridge ships beside it, and the tool surface below is live. Phase 3 (approval
-dialog, revert-batch, activity UI, `.mcpb`, docs) is still ahead; see
-[§9](#9-phasing).
+Status: **phases 0–3 built** — the server runs in-app over a pipe, the
+bridge and a `.mcpb` extension ship beside it, the tool surface below is
+live, a write can be held until the user approves it, and any one call can be
+put back afterwards. Phase 4 (an HTTP transport, Kern as a *client*) is
+optional and not started; see [§9](#9-phasing).
 
 ## The one thing to get straight first
 
@@ -87,12 +88,15 @@ src-tauri/src/domain/mcp/
   mod.rs       McpState, listener start/stop, the tauri::command wrappers
   server.rs    rmcp ServerHandler: #[tool_router] impl, resources, prompts
   tools.rs     tool fns → existing domain functions (thin; no SQL here)
-  policy.rs    the single choke point: enabled, scope, project allowlist, locks, limits
+  policy.rs    the single choke point: enabled, scope, project allowlists, locks, limits
+  confirm.rs   "may it?" — the dialog a write waits on, and its timeout
   clients.rs   registered clients, approval, last-seen
   audit.rs     mcp_audit writes + activity log
+  revert.rs    the undo plan a write records, and replaying it
   mermaid.rs   flowchart text → whiteboard scene (Rust port, §5)
 src-tauri/mcp-bridge/   new workspace member → kern-mcp(.exe)
-src/features/ai/McpTab.tsx (+ mcp.css)
+scripts/mcp-bundle.mjs  the bridge sidecar + the .mcpb, built before each tauri build
+src/features/ai/McpTab.tsx (+ mcp.css), src/features/ai/McpApproval.tsx
 ```
 
 Plus the edits the house recipes demand:
@@ -106,7 +110,9 @@ Plus the edits the house recipes demand:
 
 New source files carry the `@Author` / `@Date` header.
 
-One migration appends `mcp_clients` and `mcp_audit`. Both are **per-computer**,
+Two migrations: one appends `mcp_clients` and `mcp_audit`, and a later one
+adds `undo` and `reverted_at` to `mcp_audit` (§7). Both tables are
+**per-computer**,
 so both go in `DEVICE_TABLES` in `src-tauri/src/db/mod.rs` and *not* in
 `TABLES` in `domain/cloud/sync.rs`. A connected assistant is a property of this
 machine, not of your data.
@@ -124,11 +130,11 @@ a mirror. Prefer one composite tool over five round trips.
 | `kern_today` | `daily::rundown_data` | read |
 | `kern_project_list` / `_get` | `projects::*` | read |
 | **`kern_project_setup`** | `templates::create_project_from` | write |
-| `kern_project_update` | `projects::update` | write *(not built yet)* |
+| `kern_project_update` | `projects::update` | write |
 | `kern_task_search` | `tasks::query_tasks` | read |
 | `kern_task_create` (accepts an array, with subtasks) | `tasks::create_task` | write |
 | `kern_task_update` / `_complete` | `tasks::*` | write |
-| `kern_task_move` | `tasks::*` | write *(not built yet)* |
+| `kern_task_move` | `tasks::*` | write |
 | `kern_task_delete` | `tasks_delete` → **Trash** | write |
 | `kern_board_list` / `_create` | `boards::*` | write |
 | `kern_note_create` / `_update` / `_get` | `notes::*` | write |
@@ -216,12 +222,19 @@ Everything else:
   `ensure_readable`, or post-filter. Add `cargo test mcp`, which walks every
   registered tool and asserts it, the way `cargo test passkeys` does.
 - **Deletes mean Trash.** The purge commands are not in the surface.
-- **Approval mode** (`mcp.confirmWrites`: never / destructive only / always):
-  an in-app dialog with a timeout; declined returns `isError` with a readable
-  reason.
+- **Approval mode** (`mcp.confirmWrites`: never / deletes and rewrites /
+  every change). `confirm.rs` emits the question, brings the window forward
+  and waits on a channel; two minutes of silence counts as *no*, because
+  nobody being at the keyboard is exactly when a write shouldn't go through.
+  A refusal comes back as a readable sentence saying who decided. The wait
+  happens **before** the database lock is taken — a dialog holding the
+  connection would stall the rest of the app behind it. How much of a change
+  a call is (`Risk`) is decided per tool, where the arguments are in hand:
+  replacing a note's body or what's on a whiteboard counts, adding to either
+  doesn't.
 - **Audit**: every call into `mcp_audit` (client, tool, argument digest, rows
   touched, outcome); writes also go through `activity::log`; a live list in
-  the UI.
+  the UI, each row offering **Revert** (§7).
 - **Limits**: calls per minute, tasks per call, note length. A confused agent
   should hit a wall, not the database.
 - **Privacy docs**: MCP joins the bulleted list in DEVELOPMENT.md § Privacy and
@@ -237,9 +250,22 @@ Sync already solved this. `kern://cloud-applied` carries the touched tables and
 invalidate the matching domains, and raise a toast — *"Claude created 6 tasks
 in Website Redesign."* A coarse `kern://data-changed` works for a first cut.
 
-Phase 3 nicety: stamp each tool call's writes with a batch id in the activity
-log and offer **Revert this batch** — safer than wiring the front-end undo
-store to a backend actor.
+**Revert this batch.** One call is one batch, and the audit row *is* the
+batch id — there is no second table. Each write returns `Wrote<T>`: its answer
+plus the least that would undo it (`revert::Step` — the ids it created, and
+the fields it overwrote as they were), which `server.rs` stores as JSON in
+`mcp_audit.undo`. `mcp_revert` replays those steps in one transaction and
+stamps `reverted_at`. The `kern://mcp-applied` event carries the batch id, so
+the toast can offer it there and then.
+
+This deliberately isn't the front-end undo store: that is a stack of closures
+living in a window, and an assistant writes while nobody is looking. Two
+honest limits, both said out loud in the dialog: a revert restores the call's
+own changes and overwrites anything edited since, and a change's consequences
+stay (the next occurrence of a recurring task the assistant completed is a
+task in its own right by then). Created items go to Trash, as every other
+delete in Kern does. A whiteboard too big to keep a copy of simply has no
+plan, and the row says so instead of offering a button that does nothing.
 
 ## 8. The settings tab
 
@@ -252,11 +278,19 @@ does the work:
   `claude_desktop_config.json`, with copy-to-clipboard as a fallback.
 - **Claude Code** → `claude mcp add kern -- "<path>\kern-mcp.exe"`, one click
   to copy.
-- Later: ship a **`.mcpb` bundle** (Anthropic's extension format, renamed from
-  `.dxt` in September 2025) so installing is drag-and-drop.
+- **Extension bundle** → shows `kern.mcpb` in the file manager, to drag onto
+  Claude Desktop's Extensions page. The `.mcpb` (Anthropic's extension
+  format, renamed from `.dxt` in September 2025) is a zip of a manifest and
+  the bridge, built by `scripts/mcp-bundle.mjs` from `beforeBuildCommand`, so
+  every `tauri build` has one; the same script writes the
+  `binaries/kern-mcp-<triple>` sidecar that `bundle.externalBin` installs
+  beside `kern.exe`. `release.mjs` attaches `Kern_<version>.mcpb` to the
+  GitHub release as a plain download — it has nothing to do with the updater.
 
 New keys: `mcp.enabled`, `mcp.confirmWrites`, `mcp.allowedProjects`,
-`mcp.maxCallsPerMinute`, `mcp.auditDays`.
+`mcp.maxCallsPerMinute`, `mcp.auditDays`. `mcp.allowedProjects` is the
+blanket allowlist: a project has to be inside it *and* inside the client's
+own list, and while it is set no assistant can create a project.
 
 ## 9. Phasing
 
@@ -265,12 +299,10 @@ New keys: `mcp.enabled`, `mcp.confirmWrites`, `mcp.allowedProjects`,
 | **0 — spike** | rmcp in-app over a pipe, bridge binary, one tool (`kern_task_create`), driven from Claude Code. Proves the MSRV bump, the pipe and the threading. | ½ day | done |
 | **1 — core** | `policy.rs`, audit, migration, settings tab, read tools plus task/note/board writes, Claude Desktop config writer. | 2–3 days | done |
 | **2 — the asks** | `kern_project_setup` via `ProjectDoc`, mermaid port + shared fixture, milestones and labels, resources, prompts. | 2 days | done |
-| **3 — polish** | approval dialog, revert-batch, activity UI, `.mcpb`, DEVELOPMENT.md and README. | 1–2 days | next |
-| **4 — optional** | HTTP transport (+axum) for other clients; Kern as MCP client; Appendix B. | — | |
+| **3 — polish** | approval dialog, revert-batch, activity UI, `.mcpb`, `kern_project_update` and `kern_task_move`, DEVELOPMENT.md and README. | 1–2 days | done |
+| **4 — optional** | HTTP transport (+axum) for other clients; Kern as MCP client; Appendix B. | — | next |
 
-Left over from §4 after phase 2: `kern_project_update` and `kern_task_move`,
-and `mcp.confirmWrites` / `mcp.allowedProjects`, which belong with the approval
-dialog in phase 3.
+The surface in §4 is now complete, and so are the five settings keys.
 
 ## 10. Risks
 
@@ -281,9 +313,9 @@ dialog in phase 3.
   never hold the `Mutex<Connection>` across an await, or UI commands stall
   behind an agent. `project_setup` is one transaction, which is fine.
 - **MSRV and binary size**, as above.
-- **Agent writes at scale.** Twenty tasks from one call is normal; the
-  undo/revert story is what keeps that comfortable, which is why it is phase 3
-  and not "someday".
+- **Agent writes at scale.** Twenty tasks from one call is normal, which is
+  why the undo story went in at phase 3 rather than "someday": one call is
+  one batch, and the whole batch goes back together.
 
 ## Appendix A — Kern as MCP *client* (the other direction)
 

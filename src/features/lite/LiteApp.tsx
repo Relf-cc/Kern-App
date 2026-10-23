@@ -41,6 +41,7 @@ import { useRouter, navigate } from "@/stores/router";
 import { isTextInput } from "@/lib/shortcuts";
 import { Toaster } from "@/components/ui/Toaster";
 import { ConfirmHost, PromptHost } from "@/components/ui/Dialog";
+import { McpApprovalHost } from "@/features/ai/McpApproval";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { Dropdown, type MenuItems } from "@/components/ui/Menu";
 import { CloudHost } from "@/features/cloud/CloudHost";
@@ -104,6 +105,7 @@ export default function LiteApp() {
       <CloudHost />
       <ConfirmHost />
       <PromptHost />
+      <McpApprovalHost />
       <Toaster />
     </>
   );

@@ -9,8 +9,9 @@
 //! `cargo test mcp` can check that each registered tool asks.
 //!
 //! The rules, in order: the feature is on; this client was approved; writing
-//! needs the write scope; a project must be inside the client's allowlist and
-//! must not be locked behind a passkey.
+//! needs the write scope; a project must be inside both allowlists — the one
+//! that covers every assistant (`mcp.allowedProjects`) and the client's own —
+//! and must not be locked behind a passkey.
 
 use crate::domain::{passkeys, settings};
 use crate::error::{AppError, AppResult};
@@ -38,6 +39,13 @@ pub fn max_calls_per_minute(conn: &Connection) -> i64 {
 
 pub fn audit_days(conn: &Connection) -> i64 {
     settings::get_or(conn, "mcp.auditDays", 30)
+}
+
+/// Projects every assistant is limited to; empty means all of them. This one
+/// is the user's blanket answer, kept in settings rather than per client, so
+/// a new assistant is inside it the moment it connects.
+pub fn allowed_projects(conn: &Connection) -> Vec<String> {
+    settings::get_or(conn, "mcp.allowedProjects", Vec::new())
 }
 
 /// May this client make this kind of call at all, right now?
@@ -70,12 +78,36 @@ pub fn guard(conn: &Connection, client: &McpClient, access: Access) -> AppResult
 
 /// Is this project one the client may touch? A locked project is refused the
 /// same way it is everywhere else — `ensure_readable` returns `Locked`.
+///
+/// A project outside either allowlist is `NotFound` rather than refused: an
+/// assistant that was never told the project exists shouldn't learn that it
+/// does from the error.
 pub fn ensure_project(conn: &Connection, client: &McpClient, project_id: Option<&str>) -> AppResult<()> {
     let Some(id) = project_id else { return Ok(()) };
-    if !client.projects.is_empty() && !client.projects.iter().any(|p| p == id) {
+    let outside = |list: &[String]| !list.is_empty() && !list.iter().any(|p| p == id);
+    if outside(&client.projects) || outside(&allowed_projects(conn)) {
         return Err(AppError::NotFound("Project".into()));
     }
     passkeys::ensure_readable(conn, id)
+}
+
+/// May this client make a project at all? Not while it is confined to a
+/// chosen set — a new project would be outside it, and silently working
+/// somewhere the user didn't choose is the thing an allowlist is for.
+pub fn ensure_may_create_project(conn: &Connection, client: &McpClient) -> AppResult<()> {
+    if !client.projects.is_empty() {
+        return Err(AppError::Invalid(format!(
+            "'{}' can only work in a chosen set of projects, so it can't create a new one. That's changed in Kern under Settings → API → Assistants.",
+            client.name
+        )));
+    }
+    if !allowed_projects(conn).is_empty() {
+        return Err(AppError::Invalid(
+            "Assistants are limited to a chosen set of projects in Kern, so a new one can't be created. That's changed under Settings → API → Assistants."
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// True when the client may see this project — the quiet form of
@@ -155,13 +187,38 @@ mod tests {
     }
 
     #[test]
+    fn the_blanket_allowlist_applies_to_every_assistant() {
+        let c = db();
+        let client = approved(&c, "write");
+        c.execute(
+            "INSERT INTO projects(id, name, description, sort_order, created_at, updated_at)
+             VALUES ('p1', 'One', '', 1, 1, 1), ('p2', 'Two', '', 2, 1, 1)",
+            [],
+        )
+        .unwrap();
+        assert!(ensure_may_create_project(&c, &client).is_ok());
+        settings::set(&c, "mcp.allowedProjects", &json!(["p1"])).unwrap();
+        assert!(ensure_project(&c, &client, Some("p1")).is_ok());
+        assert!(ensure_project(&c, &client, Some("p2")).is_err());
+        assert!(!visible(&c, &client, Some("p2")));
+        // And it still has to pass the client's own list.
+        let client = clients::set_projects(&c, &client.id, &["p2".into()]).unwrap();
+        assert!(ensure_project(&c, &client, Some("p1")).is_err());
+        assert!(ensure_project(&c, &client, Some("p2")).is_err());
+        // Nothing new may be created while either list is in force.
+        assert!(ensure_may_create_project(&c, &client).is_err());
+        let client = clients::set_projects(&c, &client.id, &[]).unwrap();
+        assert!(ensure_may_create_project(&c, &client).is_err());
+    }
+
+    #[test]
     fn the_rate_limit_bites() {
         let c = db();
         let client = approved(&c, "write");
         settings::set(&c, "mcp.maxCallsPerMinute", &json!(2)).unwrap();
         assert!(guard(&c, &client, Access::Read).is_ok());
-        audit::record(&c, &client, "kern_search", None, Ok(()));
-        audit::record(&c, &client, "kern_search", None, Ok(()));
+        let _ = audit::record(&c, &client, "kern_search", None, Ok(()), None);
+        let _ = audit::record(&c, &client, "kern_search", None, Ok(()), None);
         assert!(guard(&c, &client, Access::Read).is_err());
     }
 }

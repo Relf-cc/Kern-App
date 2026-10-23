@@ -8,15 +8,18 @@
 //! a socket or knows about rmcp — `server.rs` wires these up, and these are
 //! what the tests drive.
 //!
-//! Two rules hold throughout:
+//! Three rules hold throughout:
 //!
 //! - **Ask `policy` before touching a project.** Every function that takes or
 //!   returns a project id calls `ensure_project` or filters with `visible`.
 //! - **Answer small.** The model pays for every field, so these return brief
 //!   shapes with names in them (project names, label names), not the internal
 //!   records with their ids, sort orders and timestamps.
+//! - **A write says how to undo itself.** Every write returns `Wrote<T>`,
+//!   whose second half is the batch's revert plan (`revert.rs`).
 
 use crate::domain::mcp::clients::McpClient;
+use crate::domain::mcp::revert::{self, Step, Touched};
 use crate::domain::mcp::{mermaid, policy};
 use crate::domain::{activity, boards, labels, milestones, notes, projects, search, tasks, templates, whiteboards};
 use crate::error::{invalid, AppError, AppResult};
@@ -575,6 +578,22 @@ pub fn find_note(conn: &Connection, client: &McpClient, needle: &str) -> AppResu
 
 // ------------------------------------------------------------ writing
 
+/// A write's answer, and what it would take to put it back.
+///
+/// Every write tool returns one. `server.rs` stores the `undo` half with the
+/// call's audit row, and **Revert this batch** in the Assistants tab replays
+/// it. An empty plan means the call can't be put back, and the tab says so
+/// rather than offering a button that does nothing.
+#[derive(Debug)]
+pub struct Wrote<T> {
+    pub value: T,
+    pub undo: Vec<Step>,
+}
+
+fn wrote<T>(value: T, undo: Vec<Step>) -> AppResult<Wrote<T>> {
+    Ok(Wrote { value, undo })
+}
+
 #[derive(Deserialize, schemars::JsonSchema, Debug, Default, Clone)]
 #[serde(rename_all = "camelCase", default)]
 pub struct NewTask {
@@ -609,7 +628,7 @@ pub struct TaskCreateArgs {
 /// The most an assistant may create in one call.
 const MAX_BATCH: usize = 100;
 
-pub fn task_create(conn: &mut Connection, client: &McpClient, args: &TaskCreateArgs) -> AppResult<Vec<TaskBrief>> {
+pub fn task_create(conn: &mut Connection, client: &McpClient, args: &TaskCreateArgs) -> AppResult<Wrote<Vec<TaskBrief>>> {
     if args.tasks.is_empty() {
         return invalid("Give at least one task to create.");
     }
@@ -650,7 +669,11 @@ pub fn task_create(conn: &mut Connection, client: &McpClient, args: &TaskCreateA
     }
     tx.commit()?;
     let names = Names::load(conn)?;
-    Ok(made.iter().map(|t| names.task(t)).collect())
+    // Reverting takes the tasks away again. Any label the batch had to create
+    // on the way stays: a label is shared, costs nothing, and by then may be
+    // on something else.
+    let undo = vec![Step::TrashTasks { ids: made.iter().map(|t| t.id.clone()).collect() }];
+    wrote(made.iter().map(|t| names.task(t)).collect(), undo)
 }
 
 #[derive(Deserialize, schemars::JsonSchema, Debug)]
@@ -671,10 +694,25 @@ pub struct TaskUpdateArgs {
     pub add_labels: Option<Vec<String>>,
 }
 
-pub fn task_update(conn: &mut Connection, client: &McpClient, args: &TaskUpdateArgs) -> AppResult<TaskBrief> {
+pub fn task_update(conn: &mut Connection, client: &McpClient, args: &TaskUpdateArgs) -> AppResult<Wrote<TaskBrief>> {
     let existing = tasks::get_task(conn, &args.id)?;
     policy::ensure_project(conn, client, existing.project_id.as_deref())?;
     policy::ensure_project(conn, client, args.project_id.as_deref())?;
+    // Moving a task to another project drops its place on the old board, so
+    // the column counts as changed whenever the project does.
+    let touched = Touched {
+        title: args.title.is_some(),
+        description: args.description.is_some(),
+        status: args.status.is_some(),
+        priority: args.priority.is_some(),
+        project_id: args.project_id.is_some(),
+        column_id: args.project_id.is_some(),
+        due_date: args.due_date.is_some(),
+        estimate_minutes: args.estimate_minutes.is_some(),
+        labels: args.add_labels.is_some(),
+        ..Default::default()
+    };
+    let undo = vec![Step::TaskWas { id: args.id.clone(), fields: revert::TaskFields::of(&existing, &touched) }];
     let tx = conn.transaction()?;
     let add_label_ids = match &args.add_labels {
         Some(names) if !names.is_empty() => {
@@ -700,7 +738,7 @@ pub fn task_update(conn: &mut Connection, client: &McpClient, args: &TaskUpdateA
     tasks::update_task(&tx, &args.id, &patch)?;
     tx.commit()?;
     let names = Names::load(conn)?;
-    Ok(names.task(&tasks::get_task(conn, &args.id)?))
+    wrote(names.task(&tasks::get_task(conn, &args.id)?), undo)
 }
 
 #[derive(Deserialize, schemars::JsonSchema, Debug)]
@@ -716,13 +754,19 @@ pub struct CountResult {
     pub message: String,
 }
 
-pub fn task_complete(conn: &mut Connection, client: &McpClient, args: &IdsArgs) -> AppResult<CountResult> {
+pub fn task_complete(conn: &mut Connection, client: &McpClient, args: &IdsArgs) -> AppResult<Wrote<CountResult>> {
     if args.ids.is_empty() || args.ids.len() > MAX_BATCH {
         return invalid(format!("Give between 1 and {MAX_BATCH} task ids."));
     }
+    // Reverting puts each task back on the status it was on, which for a
+    // recurring task is not the same as un-spawning its next occurrence: that
+    // one is a task of its own by then. See `revert.rs`.
+    let touched = Touched { status: true, column_id: true, resolution: true, ..Default::default() };
+    let mut undo = vec![];
     for id in &args.ids {
         let t = tasks::get_task(conn, id)?;
         policy::ensure_project(conn, client, t.project_id.as_deref())?;
+        undo.push(Step::TaskWas { id: id.clone(), fields: revert::TaskFields::of(&t, &touched) });
     }
     let tx = conn.transaction()?;
     let patch = tasks::TaskPatch { status: Some("completed".into()), ..Default::default() };
@@ -730,11 +774,11 @@ pub fn task_complete(conn: &mut Connection, client: &McpClient, args: &IdsArgs) 
         tasks::update_task(&tx, id, &patch)?;
     }
     tx.commit()?;
-    Ok(CountResult { count: args.ids.len(), message: format!("Completed {} task(s).", args.ids.len()) })
+    wrote(CountResult { count: args.ids.len(), message: format!("Completed {} task(s).", args.ids.len()) }, undo)
 }
 
 /// Deleting means Trash, here as everywhere else: the user can put it back.
-pub fn task_delete(conn: &mut Connection, client: &McpClient, args: &IdsArgs) -> AppResult<CountResult> {
+pub fn task_delete(conn: &mut Connection, client: &McpClient, args: &IdsArgs) -> AppResult<Wrote<CountResult>> {
     if args.ids.is_empty() || args.ids.len() > MAX_BATCH {
         return invalid(format!("Give between 1 and {MAX_BATCH} task ids."));
     }
@@ -745,10 +789,13 @@ pub fn task_delete(conn: &mut Connection, client: &McpClient, args: &IdsArgs) ->
     let tx = conn.transaction()?;
     tasks::soft_delete(&tx, &args.ids)?;
     tx.commit()?;
-    Ok(CountResult {
-        count: args.ids.len(),
-        message: format!("Moved {} task(s) to Trash, where they can be restored.", args.ids.len()),
-    })
+    wrote(
+        CountResult {
+            count: args.ids.len(),
+            message: format!("Moved {} task(s) to Trash, where they can be restored.", args.ids.len()),
+        },
+        vec![Step::RestoreTasks { ids: args.ids.clone() }],
+    )
 }
 
 #[derive(Deserialize, schemars::JsonSchema, Debug)]
@@ -763,13 +810,14 @@ pub struct NoteCreateArgs {
 /// The most Markdown an assistant may write into one note.
 const MAX_NOTE_CHARS: usize = 200_000;
 
-pub fn note_create(conn: &Connection, client: &McpClient, args: &NoteCreateArgs) -> AppResult<NoteBrief> {
+pub fn note_create(conn: &Connection, client: &McpClient, args: &NoteCreateArgs) -> AppResult<Wrote<NoteBrief>> {
     policy::ensure_project(conn, client, args.project_id.as_deref())?;
     if args.content.chars().count() > MAX_NOTE_CHARS {
         return invalid("That note is too long. Split it into several.");
     }
     let note = notes::create_note(conn, &args.title, &args.content, args.project_id.as_deref())?;
-    Ok(note_brief(note, false))
+    let undo = vec![Step::TrashNotes { ids: vec![note.id.clone()] }];
+    wrote(note_brief(note, false), undo)
 }
 
 #[derive(Deserialize, schemars::JsonSchema, Debug)]
@@ -783,7 +831,7 @@ pub struct NoteUpdateArgs {
     pub append: Option<String>,
 }
 
-pub fn note_update(conn: &mut Connection, client: &McpClient, args: &NoteUpdateArgs) -> AppResult<NoteBrief> {
+pub fn note_update(conn: &mut Connection, client: &McpClient, args: &NoteUpdateArgs) -> AppResult<Wrote<NoteBrief>> {
     let existing = notes::get_note(conn, &args.id)?;
     policy::ensure_project(conn, client, existing.project_id.as_deref())?;
     if args.content.is_some() && args.append.is_some() {
@@ -797,9 +845,14 @@ pub fn note_update(conn: &mut Connection, client: &McpClient, args: &NoteUpdateA
     if content.as_ref().is_some_and(|c| c.chars().count() > MAX_NOTE_CHARS) {
         return invalid("That note is too long. Split it into several.");
     }
+    let undo = vec![Step::NoteWas {
+        id: existing.id.clone(),
+        title: existing.title.clone(),
+        content: existing.content.clone(),
+    }];
     let patch = notes::NotePatch { title: args.title.clone(), content, ..Default::default() };
     let note = notes::update_note(conn, &args.id, &patch)?;
-    Ok(note_brief(note, false))
+    wrote(note_brief(note, false), undo)
 }
 
 #[derive(Deserialize, schemars::JsonSchema, Debug)]
@@ -811,7 +864,7 @@ pub struct BoardCreateArgs {
     pub columns: Option<Vec<String>>,
 }
 
-pub fn board_create(conn: &mut Connection, client: &McpClient, args: &BoardCreateArgs) -> AppResult<BoardBrief> {
+pub fn board_create(conn: &mut Connection, client: &McpClient, args: &BoardCreateArgs) -> AppResult<Wrote<BoardBrief>> {
     policy::ensure_project(conn, client, Some(&args.project_id))?;
     let columns = match &args.columns {
         Some(names) if !names.is_empty() => names
@@ -823,7 +876,8 @@ pub fn board_create(conn: &mut Connection, client: &McpClient, args: &BoardCreat
     let tx = conn.transaction()?;
     let board = boards::create_board(&tx, &args.project_id, &args.name, &columns)?;
     tx.commit()?;
-    board_brief(conn, board)
+    let undo = vec![Step::DeleteBoards { ids: vec![board.id.clone()] }];
+    wrote(board_brief(conn, board)?, undo)
 }
 
 // ------------------------------------------------------ setting up a project
@@ -976,13 +1030,8 @@ fn project_doc(args: &ProjectSetupArgs) -> templates::ProjectDoc {
 
 /// A whole project — boards, milestones, scheduled tasks, notes — in one
 /// transaction. Either all of it arrives or none of it does.
-pub fn project_setup(conn: &mut Connection, client: &McpClient, args: &ProjectSetupArgs) -> AppResult<ProjectDigest> {
-    if !client.projects.is_empty() {
-        return invalid(format!(
-            "'{}' can only work in a chosen set of projects, so it can't create a new one. That's changed in Kern under Settings → API → Assistants.",
-            client.name
-        ));
-    }
+pub fn project_setup(conn: &mut Connection, client: &McpClient, args: &ProjectSetupArgs) -> AppResult<Wrote<ProjectDigest>> {
+    policy::ensure_may_create_project(conn, client)?;
     let total: usize = args.tasks.iter().map(|t| 1 + t.subtasks.len()).sum();
     if total > MAX_BATCH {
         return invalid(format!(
@@ -1001,7 +1050,183 @@ pub fn project_setup(conn: &mut Connection, client: &McpClient, args: &ProjectSe
     let tx = conn.transaction()?;
     let project = templates::create_project_from(&tx, &doc, &input)?;
     tx.commit()?;
-    project_get(conn, client, &IdArgs { id: project.id })
+    // One call, one thing to put back: the project takes its boards,
+    // milestones, tasks and notes with it, as it does from the Trash.
+    let undo = vec![Step::TrashProjects { ids: vec![project.id.clone()] }];
+    wrote(project_get(conn, client, &IdArgs { id: project.id })?, undo)
+}
+
+// ---------------------------------------------------- changing a project
+
+#[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectUpdateArgs {
+    pub id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// The day the project is aimed at, YYYY-MM-DD. Send "none" to clear it.
+    pub target_date: Option<String>,
+    /// Put the project away, or bring it back. An archived project is still
+    /// there; it just stays out of the way.
+    pub archived: Option<bool>,
+}
+
+pub fn project_update(conn: &Connection, client: &McpClient, args: &ProjectUpdateArgs) -> AppResult<Wrote<ProjectBrief>> {
+    policy::ensure_project(conn, client, Some(&args.id))?;
+    if args.name.is_none() && args.description.is_none() && args.target_date.is_none() && args.archived.is_none() {
+        return invalid("Nothing to change. Give a name, a description, a target date or archived.");
+    }
+    let existing = projects::get_project(conn, &args.id)?;
+    let undo = vec![Step::ProjectWas {
+        id: args.id.clone(),
+        fields: revert::ProjectFields {
+            name: args.name.as_ref().map(|_| existing.name.clone()),
+            description: args.description.as_ref().map(|_| existing.description.clone()),
+            target_date: args.target_date.as_ref().map(|_| existing.target_date.clone()),
+            archived: args.archived.map(|_| existing.archived_at.is_some()),
+        },
+    }];
+    let patch = projects::ProjectPatch {
+        name: args.name.clone(),
+        description: args.description.clone(),
+        target_date: args.target_date.as_deref().map(|d| (d != "none").then(|| d.to_string())),
+        archived: args.archived,
+        ..Default::default()
+    };
+    wrote(project_brief(projects::update_project(conn, &args.id, &patch)?), undo)
+}
+
+// ------------------------------------------------------------ moving tasks
+
+#[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TaskMoveArgs {
+    /// The tasks to move.
+    pub ids: Vec<String>,
+    /// The project they should end up in. Send "none" to take them out of
+    /// whichever project they are in and leave them loose.
+    pub project_id: Option<String>,
+    /// A board to put them on, by name or id. Needed with `column` unless
+    /// the project has only one board.
+    pub board: Option<String>,
+    /// A column on that board, by name. A task put in a column takes that
+    /// column's status, exactly as it would when dragged there on screen.
+    pub column: Option<String>,
+}
+
+/// A board an assistant named: by id, or by name within the project.
+fn find_board(conn: &Connection, project_id: &str, needle: Option<&str>) -> AppResult<boards::Board> {
+    let list = boards::list_boards(conn, project_id)?;
+    match needle {
+        Some(n) => list
+            .into_iter()
+            .find(|b| b.id == n || b.name.eq_ignore_ascii_case(n))
+            .ok_or_else(|| AppError::NotFound(format!("Board '{n}'"))),
+        // No board named: only unambiguous if there is one.
+        None => {
+            if list.len() > 1 {
+                return invalid("That project has more than one board, so say which one with `board`.");
+            }
+            list.into_iter().next().ok_or_else(|| AppError::NotFound("Board".into()))
+        }
+    }
+}
+
+/// Moves tasks between projects, boards and columns — the one change a
+/// `kern_task_update` per task can't make tidily, because a column belongs to
+/// a board and a board belongs to a project.
+pub fn task_move(conn: &mut Connection, client: &McpClient, args: &TaskMoveArgs) -> AppResult<Wrote<CountResult>> {
+    if args.ids.is_empty() || args.ids.len() > MAX_BATCH {
+        return invalid(format!("Give between 1 and {MAX_BATCH} task ids."));
+    }
+    let to_project = match args.project_id.as_deref() {
+        Some("none") => Some(None),
+        Some(id) => {
+            policy::ensure_project(conn, client, Some(id))?;
+            projects::get_project(conn, id)?;
+            Some(Some(id.to_string()))
+        }
+        None => None,
+    };
+    if args.column.is_none() && args.board.is_some() {
+        return invalid("A board on its own doesn't say where on it to put them. Add a `column`.");
+    }
+    if to_project.is_none() && args.column.is_none() {
+        return invalid("Say where they should go: a projectId, or a column on one of its boards.");
+    }
+
+    let mut existing = vec![];
+    for id in &args.ids {
+        let t = tasks::get_task(conn, id)?;
+        policy::ensure_project(conn, client, t.project_id.as_deref())?;
+        existing.push(t);
+    }
+
+    // A column is only meaningful on a board in the project the tasks are
+    // ending up in, so that project has to be settled first.
+    let column_id = match &args.column {
+        Some(name) => {
+            let project = match &to_project {
+                Some(Some(p)) => p.clone(),
+                Some(None) => return invalid("A loose task isn't on a board, so a column can't be set with projectId \"none\"."),
+                None => {
+                    let mut owners: Vec<&str> = existing.iter().filter_map(|t| t.project_id.as_deref()).collect();
+                    owners.sort_unstable();
+                    owners.dedup();
+                    match owners.as_slice() {
+                        [one] => one.to_string(),
+                        [] => return invalid("Those tasks aren't in a project, so there's no board to put them on. Send a projectId too."),
+                        _ => return invalid("Those tasks are in different projects, so one column can't hold them all. Move them a project at a time."),
+                    }
+                }
+            };
+            let board = find_board(conn, &project, args.board.as_deref())?;
+            let columns = boards::list_columns(conn, &board.id)?;
+            let column = columns
+                .iter()
+                .find(|c| c.id == *name || c.name.eq_ignore_ascii_case(name))
+                .ok_or_else(|| {
+                    AppError::NotFound(format!(
+                        "Column '{name}' on '{}' (it has {})",
+                        board.name,
+                        columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
+                    ))
+                })?;
+            Some(Some(column.id.clone()))
+        }
+        None => to_project.as_ref().map(|_| None),
+    };
+
+    // A column carries a status, so moving into one can change it.
+    let touched = Touched {
+        project_id: to_project.is_some(),
+        column_id: true,
+        status: args.column.is_some(),
+        ..Default::default()
+    };
+    let undo = existing
+        .iter()
+        .map(|t| Step::TaskWas { id: t.id.clone(), fields: revert::TaskFields::of(t, &touched) })
+        .collect();
+
+    let tx = conn.transaction()?;
+    let patch = tasks::TaskPatch { project_id: to_project.clone(), column_id: column_id.clone(), ..Default::default() };
+    for id in &args.ids {
+        tasks::update_task(&tx, id, &patch)?;
+    }
+    tx.commit()?;
+    let names = Names::load(conn)?;
+    let where_to = match (&to_project, &args.column) {
+        (Some(Some(p)), Some(col)) => format!(" to {} ({col})", names.projects.get(p).cloned().unwrap_or_else(|| p.clone())),
+        (Some(Some(p)), None) => format!(" to {}", names.projects.get(p).cloned().unwrap_or_else(|| p.clone())),
+        (Some(None), _) => " out of their project".to_string(),
+        (None, Some(col)) => format!(" to {col}"),
+        (None, None) => String::new(),
+    };
+    wrote(
+        CountResult { count: args.ids.len(), message: format!("Moved {} task(s){where_to}.", args.ids.len()) },
+        undo,
+    )
 }
 
 // ------------------------------------------------------ milestones and labels
@@ -1018,7 +1243,7 @@ pub struct MilestoneCreateArgs {
     pub is_release: bool,
 }
 
-pub fn milestone_create(conn: &Connection, client: &McpClient, args: &MilestoneCreateArgs) -> AppResult<MilestoneBrief> {
+pub fn milestone_create(conn: &Connection, client: &McpClient, args: &MilestoneCreateArgs) -> AppResult<Wrote<MilestoneBrief>> {
     policy::ensure_project(conn, client, Some(&args.project_id))?;
     let input = milestones::MilestoneInput {
         project_id: args.project_id.clone(),
@@ -1028,7 +1253,9 @@ pub fn milestone_create(conn: &Connection, client: &McpClient, args: &MilestoneC
         is_release: Some(args.is_release),
         ..Default::default()
     };
-    Ok(milestone_brief(milestones::create(conn, &input)?))
+    let made = milestones::create(conn, &input)?;
+    let undo = vec![Step::DeleteMilestones { ids: vec![made.id.clone()] }];
+    wrote(milestone_brief(made), undo)
 }
 
 #[derive(Deserialize, schemars::JsonSchema, Debug, Default)]
@@ -1042,13 +1269,18 @@ pub struct LabelCreateArgs {
     pub color: Option<String>,
 }
 
-pub fn label_create(conn: &Connection, _client: &McpClient, args: &LabelCreateArgs) -> AppResult<LabelBrief> {
+pub fn label_create(conn: &Connection, _client: &McpClient, args: &LabelCreateArgs) -> AppResult<Wrote<LabelBrief>> {
+    let before: Vec<String> = labels::list(conn)?.into_iter().map(|l| l.id).collect();
     let id = labels::ensure(conn, &args.name, args.color.as_deref())?;
-    labels::list(conn)?
+    // A label that was already in use was reused, not created, so there is
+    // nothing to put back.
+    let undo = if before.contains(&id) { vec![] } else { vec![Step::DeleteLabels { ids: vec![id.clone()] }] };
+    let brief = labels::list(conn)?
         .into_iter()
         .find(|l| l.id == id)
         .map(|l| LabelBrief { id: l.id, name: l.name, open_tasks: l.task_count })
-        .ok_or_else(|| AppError::NotFound("Label".into()))
+        .ok_or_else(|| AppError::NotFound("Label".into()))?;
+    wrote(brief, undo)
 }
 
 // ------------------------------------------------------------ flowcharts
@@ -1097,7 +1329,7 @@ pub fn whiteboard_from_mermaid(
     conn: &mut Connection,
     client: &McpClient,
     args: &WhiteboardMermaidArgs,
-) -> AppResult<WhiteboardResult> {
+) -> AppResult<Wrote<WhiteboardResult>> {
     // The parser's own sentence is the best thing to hand back: it says what
     // about the text stopped it.
     let chart = mermaid::parse_mermaid(&args.mermaid).map_err(AppError::Invalid)?;
@@ -1105,12 +1337,24 @@ pub fn whiteboard_from_mermaid(
         return invalid(format!("That chart has {} boxes, and {MAX_SHAPES} is the most for one board.", chart.nodes.len()));
     }
     // An existing board is drawn onto; otherwise one is made for the chart.
-    let (board, added_to) = match &args.whiteboard_id {
+    let (board, added_to, undo) = match &args.whiteboard_id {
         Some(id) => {
             let wb = whiteboards::get(conn, id)?;
             policy::ensure_project(conn, client, wb.project_id.as_deref())?;
             let origin = if args.replace { (0.0, 0.0) } else { below(&whiteboards::nodes(conn, id)?) };
             let (nodes, edges) = mermaid::chart_to_scene(&chart, origin);
+            // Adding is undone by taking the new objects off again; replacing
+            // needs the whole scene as it was, which is only kept while the
+            // board is small enough to be worth copying.
+            let undo = if args.replace {
+                revert::scene_was(conn, &wb.id)?.into_iter().collect()
+            } else {
+                vec![Step::RemoveObjects {
+                    id: wb.id.clone(),
+                    nodes: nodes.iter().map(|n| n.id.clone()).collect(),
+                    edges: edges.iter().map(|e| e.id.clone()).collect(),
+                }]
+            };
             let tx = conn.transaction()?;
             if args.replace {
                 whiteboards::save_scene(&tx, &wb.id, &nodes, &edges)?;
@@ -1120,7 +1364,7 @@ pub fn whiteboard_from_mermaid(
                 whiteboards::patch_scene(&tx, &wb.id, &whiteboards::ScenePatch { nodes, edges, ..Default::default() })?;
             }
             tx.commit()?;
-            (wb, !args.replace)
+            (wb, !args.replace, undo)
         }
         None => {
             policy::ensure_project(conn, client, args.project_id.as_deref())?;
@@ -1131,21 +1375,25 @@ pub fn whiteboard_from_mermaid(
             whiteboards::save_scene(&tx, &wb.id, &nodes, &edges)?;
             activity::log(&tx, args.project_id.as_deref(), "whiteboard", &wb.id, "created", &wb.name)?;
             tx.commit()?;
-            (wb, false)
+            let undo = vec![Step::TrashWhiteboards { ids: vec![wb.id.clone()] }];
+            (wb, false, undo)
         }
     };
     let (shapes, connectors) = (chart.nodes.len(), chart.edges.len());
-    Ok(WhiteboardResult {
-        shapes,
-        connectors,
-        message: format!(
-            "Drew {shapes} shapes and {connectors} connectors {} “{}”.",
-            if added_to { "onto" } else { "on" },
-            board.name
-        ),
-        id: board.id,
-        name: board.name,
-    })
+    wrote(
+        WhiteboardResult {
+            shapes,
+            connectors,
+            message: format!(
+                "Drew {shapes} shapes and {connectors} connectors {} “{}”.",
+                if added_to { "onto" } else { "on" },
+                board.name
+            ),
+            id: board.id,
+            name: board.name,
+        },
+        undo,
+    )
 }
 
 #[cfg(test)]
@@ -1231,7 +1479,8 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap()
+        .value;
 
         // Reachable to begin with, or the assertions below prove nothing.
         assert!(project_list(c, &cl, &ProjectListArgs::default()).unwrap().iter().any(|p| p.id == id));
@@ -1272,7 +1521,9 @@ mod tests {
         assert!(task_create(c, &cl, &new_task).is_err());
         assert!(task_update(c, &cl, &TaskUpdateArgs { title: Some("Renamed".into()), ..update_args(&t) }).is_err());
         assert!(task_complete(c, &cl, &IdsArgs { ids: vec![t.clone()] }).is_err());
-        assert!(task_delete(c, &cl, &IdsArgs { ids: vec![t] }).is_err());
+        assert!(task_delete(c, &cl, &IdsArgs { ids: vec![t.clone()] }).is_err());
+        assert!(project_update(c, &cl, &ProjectUpdateArgs { id: id.clone(), name: Some("Renamed".into()), ..Default::default() }).is_err());
+        assert!(task_move(c, &cl, &TaskMoveArgs { ids: vec![t.clone()], project_id: Some("none".into()), ..Default::default() }).is_err());
         assert!(note_create(c, &cl, &NoteCreateArgs { title: "New".into(), content: "x".into(), project_id: Some(id.clone()) }).is_err());
         assert!(note_update(c, &cl, &NoteUpdateArgs { id: note, title: None, content: Some("Rewritten".into()), append: None }).is_err());
         assert!(board_create(c, &cl, &BoardCreateArgs { project_id: id.clone(), name: "Another".into(), columns: None }).is_err());
@@ -1337,7 +1588,7 @@ mod tests {
                 },
             ],
         };
-        let made = task_create(c, &cl, &args).unwrap();
+        let made = task_create(c, &cl, &args).unwrap().value;
         assert_eq!(made.len(), 2);
         assert_eq!(made[0].project.as_deref(), Some("Website Redesign"));
         assert_eq!(made[0].due_date.as_deref(), Some("2026-11-02"));
@@ -1371,7 +1622,7 @@ mod tests {
     fn a_note_is_appended_to_rather_than_rewritten() {
         let c = &mut db();
         let cl = client(c, "write");
-        let note = note_create(c, &cl, &NoteCreateArgs { title: "Coolant".into(), content: "# Flow\n\nSteady.".into(), project_id: None }).unwrap();
+        let note = note_create(c, &cl, &NoteCreateArgs { title: "Coolant".into(), content: "# Flow\n\nSteady.".into(), project_id: None }).unwrap().value;
         let append = NoteUpdateArgs { id: note.id.clone(), title: None, content: None, append: Some("## Day two\n\nStill steady.".into()) };
         note_update(c, &cl, &append).unwrap();
         let body = note_get(c, &cl, &IdArgs { id: note.id.clone() }).unwrap().content.unwrap();
@@ -1392,7 +1643,7 @@ mod tests {
             name: "Launch".into(),
             columns: Some(vec!["Ideas".into(), "Doing".into(), "Shipped".into()]),
         };
-        let board = board_create(c, &cl, &args).unwrap();
+        let board = board_create(c, &cl, &args).unwrap().value;
         assert_eq!(board.columns.iter().map(|col| col.name.as_str()).collect::<Vec<_>>(), ["Ideas", "Doing", "Shipped"]);
         assert!(board_list(c, &cl, &BoardListArgs { project_id: Some(id) }).unwrap().iter().any(|b| b.id == board.id));
     }
@@ -1450,7 +1701,7 @@ mod tests {
             ],
             notes: vec![NewNote { title: "Brief".into(), content: "## Goals\n\n- Fewer clicks".into() }],
         };
-        let out = project_setup(c, &cl, &args).unwrap();
+        let out = project_setup(c, &cl, &args).unwrap().value;
 
         assert_eq!(out.project.name, "Website Redesign");
         assert_eq!(out.project.target_date.as_deref(), Some("2030-03-31"), "offsets count from the start date");
@@ -1514,7 +1765,7 @@ mod tests {
             project_id: Some(id.clone()),
             ..Default::default()
         };
-        let out = whiteboard_from_mermaid(c, &cl, &args).unwrap();
+        let out = whiteboard_from_mermaid(c, &cl, &args).unwrap().value;
         assert_eq!((out.shapes, out.connectors), (3, 2));
         assert_eq!(out.name, "Flow");
 
@@ -1531,7 +1782,7 @@ mod tests {
             whiteboard_id: Some(out.id.clone()),
             ..Default::default()
         };
-        assert_eq!(whiteboard_from_mermaid(c, &cl, &more).unwrap().shapes, 1);
+        assert_eq!(whiteboard_from_mermaid(c, &cl, &more).unwrap().value.shapes, 1);
         assert_eq!(whiteboard_to_mermaid(c, &cl, &IdArgs { id: out.id.clone() }).unwrap().included, 4);
         // Unless replacing is asked for, which it has to be.
         let replace = WhiteboardMermaidArgs { replace: true, ..more };
@@ -1560,16 +1811,136 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap()
+        .value;
         assert_eq!(made.status, "planned");
         assert_eq!(made.target_date.as_deref(), Some("2030-03-31"));
         assert!(milestone_list(c, &cl, &ProjectIdArgs { project_id: id }).unwrap().iter().any(|m| m.id == made.id));
         assert!(milestone_create(c, &cl, &MilestoneCreateArgs { title: "Live".into(), ..Default::default() }).is_err());
 
-        let label = label_create(c, &cl, &LabelCreateArgs { name: "Design".into(), color: None }).unwrap();
+        let label = label_create(c, &cl, &LabelCreateArgs { name: "Design".into(), color: None }).unwrap().value;
         // Asking again returns the same label rather than a near-duplicate.
-        assert_eq!(label_create(c, &cl, &LabelCreateArgs { name: "design".into(), color: None }).unwrap().id, label.id);
+        assert_eq!(label_create(c, &cl, &LabelCreateArgs { name: "design".into(), color: None }).unwrap().value.id, label.id);
         assert_eq!(label_list(c, &cl).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_project_is_renamed_and_put_back() {
+        let c = &mut db();
+        let id = project(c, "Website Redesign");
+        let cl = client(c, "write");
+        let wrote = project_update(
+            c,
+            &cl,
+            &ProjectUpdateArgs {
+                id: id.clone(),
+                name: Some("Website, again".into()),
+                target_date: Some("2030-06-01".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(wrote.value.name, "Website, again");
+        assert_eq!(wrote.value.target_date.as_deref(), Some("2030-06-01"));
+
+        revert::apply(c, &wrote.undo).unwrap();
+        let back = &project_list(c, &cl, &ProjectListArgs::default()).unwrap()[0];
+        assert_eq!(back.name, "Website Redesign");
+        assert!(back.target_date.is_none(), "a date that wasn't there is empty again");
+
+        // A call that changes nothing is a mistake worth saying out loud.
+        assert!(project_update(c, &cl, &ProjectUpdateArgs { id, ..Default::default() }).is_err());
+    }
+
+    #[test]
+    fn a_task_moves_to_a_column_and_takes_its_status() {
+        let c = &mut db();
+        let id = project(c, "Website Redesign");
+        let cl = client(c, "write");
+        let t = task(c, "Wireframes", None);
+        board_create(
+            c,
+            &cl,
+            &BoardCreateArgs { project_id: id.clone(), name: "Build".into(), columns: Some(vec!["Ideas".into(), "Doing".into()]) },
+        )
+        .unwrap();
+        // A column with no status of its own leaves the task as it is, so the
+        // move is made onto one that means something.
+        let board = board_list(c, &cl, &BoardListArgs { project_id: Some(id.clone()) }).unwrap();
+        let doing = board.iter().flat_map(|b| &b.columns).find(|col| col.name == "Doing").unwrap().id.clone();
+        c.execute("UPDATE board_columns SET status = 'in_progress' WHERE id = ?1", [&doing]).unwrap();
+
+        let args = TaskMoveArgs {
+            ids: vec![t.clone()],
+            project_id: Some(id.clone()),
+            board: Some("Build".into()),
+            column: Some("doing".into()),
+        };
+        let wrote = task_move(c, &cl, &args).unwrap();
+        assert_eq!(wrote.value.count, 1);
+        assert!(wrote.value.message.contains("Website Redesign"), "{}", wrote.value.message);
+        let moved = tasks::get_task(c, &t).unwrap();
+        assert_eq!(moved.project_id.as_deref(), Some(id.as_str()));
+        assert_eq!(moved.column_id.as_deref(), Some(doing.as_str()));
+        assert_eq!(moved.status, "in_progress");
+
+        // And back where it came from.
+        revert::apply(c, &wrote.undo).unwrap();
+        let back = tasks::get_task(c, &t).unwrap();
+        assert!(back.project_id.is_none());
+        assert!(back.column_id.is_none());
+        assert_eq!(back.status, "todo");
+
+        // A column nobody has must say which ones exist.
+        let wrong = TaskMoveArgs { column: Some("Shipped".into()), ..args };
+        let e = task_move(c, &cl, &wrong).unwrap_err().to_string();
+        assert!(e.contains("Ideas") && e.contains("Doing"), "{e}");
+        // And a move with no destination at all is a mistake, not a no-op -
+        // as is a board without a column on it.
+        assert!(task_move(c, &cl, &TaskMoveArgs { ids: vec![t.clone()], ..Default::default() }).is_err());
+        assert!(task_move(c, &cl, &TaskMoveArgs { ids: vec![t], board: Some("Build".into()), ..Default::default() }).is_err());
+    }
+
+    /// The other half of every write: what the Assistants tab replays when
+    /// someone presses **Revert this batch**.
+    #[test]
+    fn a_batch_goes_back_the_way_it_came() {
+        let c = &mut db();
+        let cl = client(c, "write");
+        let setup = ProjectSetupArgs {
+            name: "Website Redesign".into(),
+            tasks: vec![PlannedTask { title: "Wireframes".into(), ..Default::default() }],
+            notes: vec![NewNote { title: "Brief".into(), content: "## Goals".into() }],
+            ..Default::default()
+        };
+        let made = project_setup(c, &cl, &setup).unwrap();
+        let id = made.value.project.id.clone();
+
+        // A second call changes something inside it; reverting that one leaves
+        // the project alone.
+        let note = made.value.notes[0].id.clone();
+        let edit = note_update(c, &cl, &NoteUpdateArgs { id: note.clone(), title: None, content: Some("Rewritten".into()), append: None }).unwrap();
+        revert::apply(c, &edit.undo).unwrap();
+        assert_eq!(note_get(c, &cl, &IdArgs { id: note }).unwrap().content.as_deref(), Some("## Goals"));
+        assert!(project_get(c, &cl, &IdArgs { id: id.clone() }).is_ok());
+
+        // Reverting the setup takes the project and everything in it.
+        revert::apply(c, &made.undo).unwrap();
+        assert!(project_list(c, &cl, &ProjectListArgs::default()).unwrap().is_empty());
+        assert!(task_search(c, &cl, &TaskSearchArgs::default()).unwrap().is_empty());
+        assert!(crate::domain::trash::list(c).unwrap().iter().any(|i| i.kind == "project" && i.id == id), "recoverable");
+    }
+
+    #[test]
+    fn a_reused_label_has_nothing_to_put_back() {
+        let c = &mut db();
+        let cl = client(c, "write");
+        let first = label_create(c, &cl, &LabelCreateArgs { name: "Design".into(), color: None }).unwrap();
+        assert_eq!(first.undo.len(), 1, "the label is new, so reverting removes it");
+        let again = label_create(c, &cl, &LabelCreateArgs { name: "design".into(), color: None }).unwrap();
+        assert!(again.undo.is_empty(), "nothing was created the second time");
+        revert::apply(c, &first.undo).unwrap();
+        assert!(label_list(c, &cl).unwrap().is_empty());
     }
 
     #[test]

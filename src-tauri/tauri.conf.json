@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run app:prepare",
     "frontendDist": "../dist"
   },
   "app": {
@@ -38,6 +38,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": [
+      "binaries/kern-mcp"
+    ],
+    "resources": [
+      "binaries/kern.mcpb"
+    ],
     "category": "Productivity",
     "shortDescription": "Local-first personal productivity workspace",
     "longDescription": "Kern brings tasks, projects, Kanban boards, whiteboards, notes, a daily rundown and a focus timer together in one calm desktop app. Everything stays on your computer unless you choose Kern Cloud to sync your own space or collaborate in workspaces.",

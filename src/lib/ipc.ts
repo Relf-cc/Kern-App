@@ -207,6 +207,11 @@ export const api = {
       call<T.McpClient>("mcp_client_update", { id, status: patch.status ?? null, scope: patch.scope ?? null, projects: patch.projects ?? null }),
     removeClient: (id: string) => call<void>("mcp_client_remove", { id }),
     audit: (limit?: number) => call<T.McpAuditEntry[]>("mcp_audit_list", { limit: limit ?? null }),
+    /** Puts one tool call back; resolves with what it did. */
+    revert: (id: number) => call<string>("mcp_revert", { id }),
+    /** Answers a write confirmation the backend is waiting on. */
+    confirmAnswer: (id: string, allow: boolean) => call<void>("mcp_confirm_answer", { id, allow }),
+    revealBundle: () => call<string>("mcp_reveal_bundle"),
     setup: () => call<T.McpSetup>("mcp_setup_info"),
     /** Adds Kern to `claude_desktop_config.json`; returns the file it wrote. */
     setupClaudeDesktop: () => call<string>("mcp_setup_claude_desktop"),

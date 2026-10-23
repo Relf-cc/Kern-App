@@ -8,7 +8,7 @@
 // these keys (notifications, backups, window behaviour) with identical
 // defaults.
 
-import type { ProjectTab, TaskStatus } from "@/lib/types";
+import type { McpConfirm, ProjectTab, TaskStatus } from "@/lib/types";
 
 export type Density = "compact" | "comfortable" | "relaxed";
 export type Theme = "dark" | "light" | "system";
@@ -227,6 +227,10 @@ export interface Settings {
   // Assistants (MCP): AI clients that connect to Kern over a local pipe
   /** Off by default. Nothing listens until this is on. Read by the backend. */
   "mcp.enabled": boolean;
+  /** When to ask before an assistant changes anything. Read by the backend. */
+  "mcp.confirmWrites": McpConfirm;
+  /** Project ids every assistant is limited to; empty means all of them. Read by the backend. */
+  "mcp.allowedProjects": string[];
   /** Tool calls one assistant may make in a minute; 0 means no limit. Read by the backend. */
   "mcp.maxCallsPerMinute": number;
   /** Days of assistant activity to keep. Read by the backend. */
@@ -440,6 +444,8 @@ export const DEFAULTS: Settings = {
   "ai.modelPrices": {},
 
   "mcp.enabled": false,
+  "mcp.confirmWrites": "destructive",
+  "mcp.allowedProjects": [],
   "mcp.maxCallsPerMinute": 120,
   "mcp.auditDays": 30,
 

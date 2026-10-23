@@ -5,13 +5,19 @@
 //! read without asking, the prompts it offers, and the one path every call
 //! takes to reach `tools`.
 //!
-//! `call` is that path. It takes the database lock on a blocking thread, reads
-//! the client's record fresh (so revoking access stops the next call, not the
-//! next connection), asks `policy`, runs the work, writes an audit row, and —
-//! for a write — tells the interface to refresh. A tool that doesn't go
-//! through `call` is a bug; `cargo test mcp` checks that none does. Reading a
-//! resource and fetching a prompt go through it too: both read the user's
-//! data, so both are gated, rate-limited and audited like anything else.
+//! `guarded` is that path. It takes the database lock on a blocking thread,
+//! reads the client's record fresh (so revoking access stops the next call,
+//! not the next connection), asks `policy`, runs the work, writes an audit
+//! row — with the batch's revert plan, for a write — and tells the interface
+//! to refresh. A tool that doesn't go through it is a bug; `cargo test mcp`
+//! checks that none does. Reading a resource and fetching a prompt go
+//! through it too: both read the user's data, so both are gated,
+//! rate-limited and audited like anything else.
+//!
+//! Writes go through `write`, which asks the user first when
+//! `mcp.confirmWrites` calls for it. Each tool says how much of a change it
+//! is (`Risk`) where its arguments are in hand, because "replace what's on
+//! this whiteboard" and "add to it" are the same tool.
 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -30,7 +36,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::clients::{self, McpClient};
+use super::confirm::{self, Risk};
 use super::policy::{self, Access};
+use super::revert::Step;
 use super::tools::{self, *};
 use super::{audit, INSTRUCTIONS};
 
@@ -49,11 +57,12 @@ impl KernMcp {
     /// Policy, the work, the audit row and the refresh, in that order.
     ///
     /// `detail` is the one-line description of the arguments that the
-    /// Assistants tab shows; it must never carry the payload itself.
-    async fn call<T, F>(&self, tool: &'static str, access: Access, detail: String, f: F) -> Result<T, String>
+    /// Assistants tab shows; it must never carry the payload itself. The
+    /// closure's second value is the batch's revert plan, empty for a read.
+    async fn guarded<T, F>(&self, tool: &'static str, access: Access, detail: String, f: F) -> Result<T, String>
     where
         T: Send + 'static,
-        F: for<'a> FnOnce(&'a mut Connection, &McpClient) -> AppResult<T> + Send + 'static,
+        F: for<'a> FnOnce(&'a mut Connection, &McpClient) -> AppResult<(T, Vec<Step>)> + Send + 'static,
     {
         let app = self.app.clone();
         let id = self.client_id.clone();
@@ -68,20 +77,30 @@ impl KernMcp {
                     Ok(_) => Ok(()),
                     Err(e) => Err(e.to_string()),
                 };
-                audit::record(conn, &client, tool, Some(&logged), outcome.as_ref().map(|_| ()).map_err(|e| e.as_str()));
+                let undo = result.as_ref().ok().map(|(_, undo)| undo.as_slice());
+                let row = audit::record(
+                    conn,
+                    &client,
+                    tool,
+                    Some(&logged),
+                    outcome.as_ref().map(|_| ()).map_err(|e| e.as_str()),
+                    undo,
+                );
                 clients::touch(conn, &client.id)?;
-                result.map(|value| (value, client.name))
+                result.map(|(value, undo)| (value, client.name, row.filter(|_| !undo.is_empty())))
             })
         })
         .await
         .map_err(|e| format!("Kern couldn't run that: {e}"))?;
 
         match out {
-            Ok((value, client_name)) => {
+            Ok((value, client_name, batch)) => {
                 if access == Access::Write {
+                    // `batch` is the audit row, which is also what **Revert
+                    // this batch** works on — so the toast can offer it.
                     let _ = emitter.emit(
                         "kern://mcp-applied",
-                        serde_json::json!({ "client": client_name, "tool": tool, "detail": detail }),
+                        serde_json::json!({ "client": client_name, "tool": tool, "detail": detail, "batch": batch }),
                     );
                 }
                 Ok(value)
@@ -89,6 +108,15 @@ impl KernMcp {
             // The model reads this string, so it has to say what to do next.
             Err(e) => Err(describe(&e)),
         }
+    }
+
+    /// A read, or anything else with nothing to put back.
+    async fn call<T, F>(&self, tool: &'static str, access: Access, detail: String, f: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: for<'a> FnOnce(&'a mut Connection, &McpClient) -> AppResult<T> + Send + 'static,
+    {
+        self.guarded(tool, access, detail, |c, cl| Ok((f(c, cl)?, vec![]))).await
     }
 
     /// `call`, for a tool whose answer goes back as JSON. The `tool` string
@@ -100,6 +128,43 @@ impl KernMcp {
         F: for<'a> FnOnce(&'a mut Connection, &McpClient) -> AppResult<T> + Send + 'static,
     {
         self.call(tool, access, detail, f).await.map(Json)
+    }
+
+    /// A write: the question first when the user asked to be asked, then the
+    /// work, with its revert plan kept beside the audit row.
+    ///
+    /// The question is put **before** the database lock is taken. A dialog
+    /// sitting open while this process held the connection would stall every
+    /// other query in the app behind it.
+    async fn write<T, F>(&self, tool: &'static str, risk: Risk, detail: String, f: F) -> Result<Json<T>, String>
+    where
+        T: Serialize + Send + 'static,
+        F: for<'a> FnOnce(&'a mut Connection, &McpClient) -> AppResult<Wrote<T>> + Send + 'static,
+    {
+        let app = self.app.clone();
+        let id = self.client_id.clone();
+        let asked = tauri::async_runtime::spawn_blocking(move || {
+            app.state::<AppState>().with(|c| {
+                let client = clients::get(c, &id)?;
+                // Whether this call would get through at all: a read-only or
+                // revoked assistant shouldn't put a question on screen, and
+                // `guarded` writes its refusal to the audit either way.
+                let allowed = policy::guard(c, &client, Access::Write).is_ok();
+                Ok((confirm::mode(c), client.name, allowed))
+            })
+        })
+        .await
+        .map_err(|e| format!("Kern couldn't run that: {e}"))?;
+        let (mode, name, allowed) = asked.map_err(|e| describe(&e))?;
+        if allowed && confirm::needed(mode, risk) {
+            confirm::ask(&self.app, &name, tool, &detail, risk).await.map_err(|e| describe(&e))?;
+        }
+        self.guarded(tool, Access::Write, detail, |c, cl| {
+            let w = f(c, cl)?;
+            Ok((w.value, w.undo))
+        })
+        .await
+        .map(Json)
     }
 }
 
@@ -209,61 +274,79 @@ impl KernMcp {
     )]
     async fn kern_project_setup(&self, Parameters(args): Parameters<ProjectSetupArgs>) -> Result<Json<ProjectDigest>, String> {
         let detail = args.name.clone();
-        self.run("kern_project_setup", Access::Write, detail, move |c, cl| tools::project_setup(c, cl, &args)).await
+        self.write("kern_project_setup", Risk::Normal, detail, move |c, cl| tools::project_setup(c, cl, &args)).await
+    }
+
+    #[tool(description = "Change a project: its name, description, target date, or whether it is archived.")]
+    async fn kern_project_update(&self, Parameters(args): Parameters<ProjectUpdateArgs>) -> Result<Json<ProjectBrief>, String> {
+        let detail = args.id.clone();
+        self.write("kern_project_update", Risk::Normal, detail, move |c, cl| tools::project_update(c, cl, &args)).await
     }
 
     #[tool(description = "Create one or more tasks. Send a whole list in one call rather than calling repeatedly.")]
     async fn kern_task_create(&self, Parameters(args): Parameters<TaskCreateArgs>) -> Result<Json<Vec<TaskBrief>>, String> {
         let detail = count_detail(args.tasks.len(), "task", "tasks");
-        self.run("kern_task_create", Access::Write, detail, move |c, cl| tools::task_create(c, cl, &args)).await
+        self.write("kern_task_create", Risk::Normal, detail, move |c, cl| tools::task_create(c, cl, &args)).await
     }
 
     #[tool(description = "Change a task: its title, detail, status, priority, project, due date or labels.")]
     async fn kern_task_update(&self, Parameters(args): Parameters<TaskUpdateArgs>) -> Result<Json<TaskBrief>, String> {
         let detail = args.id.clone();
-        self.run("kern_task_update", Access::Write, detail, move |c, cl| tools::task_update(c, cl, &args)).await
+        self.write("kern_task_update", Risk::Normal, detail, move |c, cl| tools::task_update(c, cl, &args)).await
+    }
+
+    #[tool(
+        description = "Move tasks to another project, or onto a board column. A task put in a column takes that column's status, \
+                       the same as dragging it there. Send projectId \"none\" to take tasks out of a project altogether."
+    )]
+    async fn kern_task_move(&self, Parameters(args): Parameters<TaskMoveArgs>) -> Result<Json<CountResult>, String> {
+        let detail = count_detail(args.ids.len(), "task", "tasks");
+        self.write("kern_task_move", Risk::Normal, detail, move |c, cl| tools::task_move(c, cl, &args)).await
     }
 
     #[tool(description = "Mark tasks as completed.")]
     async fn kern_task_complete(&self, Parameters(args): Parameters<IdsArgs>) -> Result<Json<CountResult>, String> {
         let detail = count_detail(args.ids.len(), "task", "tasks");
-        self.run("kern_task_complete", Access::Write, detail, move |c, cl| tools::task_complete(c, cl, &args)).await
+        self.write("kern_task_complete", Risk::Normal, detail, move |c, cl| tools::task_complete(c, cl, &args)).await
     }
 
     #[tool(description = "Move tasks to the Trash. They are recoverable from there; nothing is destroyed.")]
     async fn kern_task_delete(&self, Parameters(args): Parameters<IdsArgs>) -> Result<Json<CountResult>, String> {
         let detail = count_detail(args.ids.len(), "task", "tasks");
-        self.run("kern_task_delete", Access::Write, detail, move |c, cl| tools::task_delete(c, cl, &args)).await
+        self.write("kern_task_delete", Risk::Destructive, detail, move |c, cl| tools::task_delete(c, cl, &args)).await
     }
 
     #[tool(description = "Write a new note. The body is Markdown, which is how Kern stores notes.")]
     async fn kern_note_create(&self, Parameters(args): Parameters<NoteCreateArgs>) -> Result<Json<NoteBrief>, String> {
         let detail = args.title.clone();
-        self.run("kern_note_create", Access::Write, detail, move |c, cl| tools::note_create(c, cl, &args)).await
+        self.write("kern_note_create", Risk::Normal, detail, move |c, cl| tools::note_create(c, cl, &args)).await
     }
 
     #[tool(description = "Change a note: replace its body with `content`, or add to the end with `append`.")]
     async fn kern_note_update(&self, Parameters(args): Parameters<NoteUpdateArgs>) -> Result<Json<NoteBrief>, String> {
+        // Replacing a body outright is a change that takes something away;
+        // adding to the end isn't.
+        let risk = if args.content.is_some() { Risk::Destructive } else { Risk::Normal };
         let detail = args.id.clone();
-        self.run("kern_note_update", Access::Write, detail, move |c, cl| tools::note_update(c, cl, &args)).await
+        self.write("kern_note_update", risk, detail, move |c, cl| tools::note_update(c, cl, &args)).await
     }
 
     #[tool(description = "Create a board in a project, with columns of your choosing.")]
     async fn kern_board_create(&self, Parameters(args): Parameters<BoardCreateArgs>) -> Result<Json<BoardBrief>, String> {
         let detail = args.name.clone();
-        self.run("kern_board_create", Access::Write, detail, move |c, cl| tools::board_create(c, cl, &args)).await
+        self.write("kern_board_create", Risk::Normal, detail, move |c, cl| tools::board_create(c, cl, &args)).await
     }
 
     #[tool(description = "Add a milestone to a project. Tasks join it through their own milestone.")]
     async fn kern_milestone_create(&self, Parameters(args): Parameters<MilestoneCreateArgs>) -> Result<Json<MilestoneBrief>, String> {
         let detail = args.title.clone();
-        self.run("kern_milestone_create", Access::Write, detail, move |c, cl| tools::milestone_create(c, cl, &args)).await
+        self.write("kern_milestone_create", Risk::Normal, detail, move |c, cl| tools::milestone_create(c, cl, &args)).await
     }
 
     #[tool(description = "Create a label. A label of that name already in use is reused rather than duplicated.")]
     async fn kern_label_create(&self, Parameters(args): Parameters<LabelCreateArgs>) -> Result<Json<LabelBrief>, String> {
         let detail = args.name.clone();
-        self.run("kern_label_create", Access::Write, detail, move |c, cl| tools::label_create(c, cl, &args)).await
+        self.write("kern_label_create", Risk::Normal, detail, move |c, cl| tools::label_create(c, cl, &args)).await
     }
 
     #[tool(
@@ -274,8 +357,11 @@ impl KernMcp {
         &self,
         Parameters(args): Parameters<WhiteboardMermaidArgs>,
     ) -> Result<Json<WhiteboardResult>, String> {
+        // Replacing what is already on a board is the destructive case; a
+        // new board, or adding below what's there, isn't.
+        let risk = if args.replace && args.whiteboard_id.is_some() { Risk::Destructive } else { Risk::Normal };
         let detail = args.name.clone().unwrap_or_else(|| "flowchart".into());
-        self.run("kern_whiteboard_from_mermaid", Access::Write, detail, move |c, cl| {
+        self.write("kern_whiteboard_from_mermaid", risk, detail, move |c, cl| {
             tools::whiteboard_from_mermaid(c, cl, &args)
         })
         .await

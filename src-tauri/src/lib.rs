@@ -241,8 +241,11 @@ pub fn run() {
             mcp::mcp_client_update,
             mcp::mcp_client_remove,
             mcp::mcp_audit_list,
+            mcp::mcp_revert,
+            mcp::mcp_confirm_answer,
             mcp::mcp_setup_info,
             mcp::mcp_setup_claude_desktop,
+            mcp::mcp_reveal_bundle,
             // git & GitHub (repository-scoped)
             git::git_remote,
             git::git_status,

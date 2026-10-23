@@ -24,6 +24,7 @@ import { CreateProjectDialog } from "@/features/projects/CreateProjectDialog";
 import { TaskModal } from "@/features/tasks/TaskModal";
 import { TaskComposer } from "@/features/tasks/TaskComposer";
 import { TrustPromptHost } from "@/features/projects/folders";
+import { McpApprovalHost } from "@/features/ai/McpApproval";
 import { RepoPickerHost } from "@/features/github/shared";
 import { ShortcutsDialog } from "@/features/settings/ShortcutsDialog";
 import { BriefingPrompt } from "@/features/daily-briefing/BriefingPrompt";
@@ -115,6 +116,9 @@ export default function Shell() {
         <LazyHosts />
       </Fragment>
       <CloudHost />
+      {/* Outside the epoch fragment: a question an assistant is waiting on
+          isn't a space's business, and switching space shouldn't drop it. */}
+      <McpApprovalHost />
       <ConfirmHost />
       <PromptHost />
       <Toaster />

@@ -11,6 +11,7 @@
     "test": "vitest run",
     "tauri": "tauri",
     "app:dev": "tauri dev",
+    "app:prepare": "npm run build && node scripts/mcp-bundle.mjs",
     "app:build": "tauri build"
   },
   "dependencies": {

@@ -20,14 +20,17 @@
 //! logic and reads no data.
 //!
 //! Layout: `clients` (who may connect), `policy` (may they do this?),
-//! `tools` (what they can do), `server` (the rmcp wiring, the resources and
-//! the prompts), `mermaid` (flowchart text ↔ whiteboard objects), `audit`
-//! (what they did).
+//! `confirm` (should we ask first?), `tools` (what they can do), `server`
+//! (the rmcp wiring, the resources and the prompts), `mermaid` (flowchart
+//! text ↔ whiteboard objects), `audit` (what they did) and `revert` (putting
+//! one call back).
 
 pub mod audit;
 pub mod clients;
+pub mod confirm;
 pub mod mermaid;
 pub mod policy;
+pub mod revert;
 pub mod server;
 pub mod tools;
 
@@ -103,6 +106,8 @@ pub struct McpState {
     /// listener leaves any live connection running on its own pipe instance,
     /// so the first-instance check below has to be asked only once.
     bound: AtomicBool,
+    /// Write confirmations waiting for an answer from the window.
+    pub asks: confirm::Asks,
 }
 
 impl McpState {
@@ -310,6 +315,15 @@ fn server_entry(client_name: &str) -> Value {
     })
 }
 
+/// The MCPB extension bundle, if one shipped beside the app. Installing it
+/// is a drag onto Claude Desktop's settings, which is the shortest route for
+/// someone who would rather not be shown a JSON fragment.
+pub fn bundle_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().unwrap_or_default();
+    let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    [dir.join("kern.mcpb"), dir.join("binaries").join("kern.mcpb")].into_iter().find(|p| p.exists())
+}
+
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct McpSetup {
@@ -321,6 +335,8 @@ pub struct McpSetup {
     pub claude_code: String,
     pub bridge_path: String,
     pub bridge_exists: bool,
+    /// The `.mcpb` bundle beside the app, when there is one.
+    pub bundle_path: Option<String>,
     pub endpoint: String,
 }
 
@@ -393,6 +409,28 @@ pub fn mcp_audit_list(state: State<AppState>, limit: Option<i64>) -> AppResult<V
     state.with(|c| audit::list(c, limit.unwrap_or(100)))
 }
 
+/// Puts one tool call back. The sentence it returns is what the toast says.
+#[tauri::command]
+pub fn mcp_revert(app: AppHandle, state: State<AppState>, id: i64) -> AppResult<String> {
+    let said = state.with(|c| {
+        let steps = audit::undo_plan(c, id)?;
+        let said = revert::apply(c, &steps)?;
+        audit::mark_reverted(c, id)?;
+        Ok(said)
+    })?;
+    // A revert touches the same things a tool call does, so the interface is
+    // refreshed the same way — but quietly: the caller has its own toast.
+    let _ = app.emit("kern://mcp-reverted", json!({ "id": id, "message": said }));
+    Ok(said)
+}
+
+/// The window's answer to a write confirmation.
+#[tauri::command]
+pub fn mcp_confirm_answer(app: AppHandle, id: String, allow: bool) -> AppResult<()> {
+    confirm::answer(&app, &id, allow);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn mcp_setup_info() -> AppResult<McpSetup> {
     let bridge = bridge_path();
@@ -407,8 +445,23 @@ pub fn mcp_setup_info() -> AppResult<McpSetup> {
         ),
         bridge_exists: bridge.exists(),
         bridge_path: bridge.to_string_lossy().into_owned(),
+        bundle_path: bundle_path().map(|p| p.to_string_lossy().into_owned()),
         endpoint: endpoint(),
     })
+}
+
+/// Shows the `.mcpb` bundle in the file manager, so it can be dragged onto
+/// Claude Desktop's extensions page.
+#[tauri::command]
+pub fn mcp_reveal_bundle(app: AppHandle) -> AppResult<String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = bundle_path()
+        .ok_or_else(|| AppError::Invalid("No Kern extension bundle shipped with this copy of Kern.".into()))?;
+    let shown = path.to_string_lossy().into_owned();
+    app.opener()
+        .reveal_item_in_dir(&path)
+        .map_err(|e| AppError::Other(format!("Kern couldn't show {shown}: {e}")))?;
+    Ok(shown)
 }
 
 /// Adds Kern to `claude_desktop_config.json`, keeping whatever else is in it.

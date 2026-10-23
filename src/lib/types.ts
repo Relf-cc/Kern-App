@@ -933,6 +933,8 @@ export interface AiSecurityReport {
 
 export type McpClientStatus = "pending" | "approved" | "revoked";
 export type McpScope = "read" | "write";
+/** When Kern asks before an assistant writes (`mcp.confirmWrites`). */
+export type McpConfirm = "never" | "destructive" | "always";
 
 /** An AI assistant that has asked to connect over Kern's local MCP pipe. */
 export interface McpClient {
@@ -965,6 +967,21 @@ export interface McpAuditEntry {
   ok: boolean;
   message: string | null;
   createdAt: number;
+  /** Whether this call can still be put back ("Revert this batch"). */
+  revertable: boolean;
+  revertedAt: number | null;
+}
+
+/** An assistant is waiting on an answer before it writes. */
+export interface McpConfirmRequest {
+  id: string;
+  client: string;
+  tool: string;
+  detail: string;
+  /** Whether the call takes something away (a delete, or a rewrite). */
+  destructive: boolean;
+  /** How long Kern waits before taking silence as no. */
+  seconds: number;
 }
 
 export interface McpSetup {
@@ -975,6 +992,8 @@ export interface McpSetup {
   claudeCode: string;
   bridgePath: string;
   bridgeExists: boolean;
+  /** The `.mcpb` extension bundle beside Kern, when this copy shipped one. */
+  bundlePath: string | null;
   endpoint: string;
 }
 

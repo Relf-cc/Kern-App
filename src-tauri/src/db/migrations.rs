@@ -6,7 +6,7 @@
 //! interrupted migration rolls back cleanly; additionally a full database
 //! copy is taken before migrating an existing database (see `db::open`).
 
-pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7, MIGRATION_8, MIGRATION_9];
+pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7, MIGRATION_8, MIGRATION_9, MIGRATION_10];
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE settings (
@@ -978,4 +978,14 @@ CREATE TABLE mcp_audit (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX idx_mcp_audit_created ON mcp_audit(created_at DESC);
+"#;
+
+const MIGRATION_10: &str = r#"
+-- What it would take to put a tool call back, and whether that has been
+-- done. `undo` is a JSON list of steps (see domain/mcp/revert.rs): the ids
+-- the call created, and the fields it overwrote, as they were. It holds the
+-- least that will restore the call's own changes, is written only for calls
+-- that changed something, and goes when the row is pruned.
+ALTER TABLE mcp_audit ADD COLUMN undo TEXT;
+ALTER TABLE mcp_audit ADD COLUMN reverted_at INTEGER;
 "#;

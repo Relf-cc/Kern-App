@@ -28,7 +28,7 @@
 // can't be created against the wrong commit.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -109,6 +109,21 @@ const artifacts = {
   nsis: join(bundle, "nsis", `Kern_${version}_x64-setup.exe`),
   msi: join(bundle, "msi", `Kern_${version}_x64_en-US.msi`),
 };
+
+// The MCP extension bundle (scripts/mcp-bundle.mjs, run by the build) is
+// attached as a plain download: it installs Kern into Claude Desktop, and has
+// nothing to do with the updater.
+const mcpbSource = join(root, "src-tauri/binaries/kern.mcpb");
+let mcpb = null;
+if (existsSync(mcpbSource)) {
+  mcpb = join(bundle, `Kern_${version}.mcpb`);
+  copyFileSync(mcpbSource, mcpb);
+  console.log(`
+✓ ${mcpb}`);
+} else {
+  console.log("
+! No kern.mcpb was built, so the Claude Desktop extension won't be attached.");
+}
 const platform = (file) => {
   if (!existsSync(file) || !existsSync(`${file}.sig`)) fail(`Missing ${file} or its .sig - was the build signed?`);
   const name = file.split(/[\\/]/).pop();
@@ -195,6 +210,6 @@ run("gh", [
   "--repo", REPO,
   "--title", q(`Kern ${version}`),
   "--notes-file", q(publishedNotes),
-  ...[artifacts.nsis, artifacts.msi, ...linuxFiles, manifestPath].map(q),
+  ...[artifacts.nsis, artifacts.msi, ...(mcpb ? [mcpb] : []), ...linuxFiles, manifestPath].map(q),
 ]);
 console.log(`\n✓ Released https://github.com/${REPO}/releases/tag/${tag}`);

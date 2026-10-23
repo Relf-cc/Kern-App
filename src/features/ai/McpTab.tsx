@@ -9,9 +9,9 @@
 // tools. Kern is the server here; nothing reaches out.
 
 import { useEffect, useState } from "react";
-import { Ban, Bot, Check, Copy, FolderCheck, ShieldCheck, Terminal, Trash } from "lucide-react";
+import { Ban, Bot, Check, Copy, FolderCheck, Package, ShieldCheck, Terminal, Trash, Undo2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import type { McpClient, McpScope } from "@/lib/types";
+import type { McpAuditEntry, McpClient, McpScope } from "@/lib/types";
 import { api, describeError } from "@/lib/ipc";
 import { invalidate } from "@/lib/query";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -23,13 +23,14 @@ import { toast, toastError } from "@/stores/toast";
 import { setSetting, useSetting } from "@/stores/settings";
 import { useProjects } from "@/hooks/data";
 import { relativeTime } from "@/lib/dates";
-import { SNumber } from "@/features/settings/controls";
+import { SNumber, SSelect } from "@/features/settings/controls";
 import "./mcp.css";
 
 const GUARANTEES = [
   "Nothing listens until you switch this on, and nothing connects until you approve it by name.",
   "The connection is a local pipe only your user account can open - no port, no token, nothing on the network.",
   "Each assistant is read-only until you give it write access, and can be limited to the projects you choose.",
+  "Kern can ask you before anything is written, and every change an assistant makes can be put back in one go.",
   "Projects locked with a passkey stay invisible, as they do everywhere else in Kern.",
   "Deleting through an assistant moves items to Trash; nothing an assistant does destroys data.",
   "Linked folders, the terminal, environment variables, tokens and your settings are not exposed at all.",
@@ -120,6 +121,26 @@ export function McpTab() {
           </div>
           <div className="set-row">
             <div className="set-row__text">
+              <span className="set-row__label">Ask before changes</span>
+              <span className="set-row__hint">
+                Kern brings its window forward and waits for you. Nothing is written if you don't answer within two minutes.
+              </span>
+            </div>
+            <div className="set-row__control">
+              <SSelect
+                k="mcp.confirmWrites"
+                options={[
+                  { value: "never", label: "Never ask" },
+                  { value: "destructive", label: "Deletes and rewrites" },
+                  { value: "always", label: "Every change" },
+                ]}
+                width={180}
+              />
+            </div>
+          </div>
+          <AllowedProjects />
+          <div className="set-row">
+            <div className="set-row__text">
               <span className="set-row__label">Limit each assistant to</span>
               <span className="set-row__hint">Tool calls a minute. A confused assistant hits this instead of your database. 0 means no limit.</span>
             </div>
@@ -145,6 +166,46 @@ export function McpTab() {
           ))}
         </ul>
       </section>
+    </div>
+  );
+}
+
+/**
+ * The allowlist that covers every assistant, present and future. Each client
+ * has one of its own as well; a project has to be in both.
+ */
+function AllowedProjects() {
+  const chosen = useSetting("mcp.allowedProjects");
+  const { data: projects } = useProjects(false);
+  const all = projects ?? [];
+  const set = (ids: string[]) => void setSetting("mcp.allowedProjects", ids);
+  const items = (): MenuItems => [
+    { type: "label", label: "Assistants may see" },
+    { label: "Every project", checked: chosen.length === 0, onSelect: () => set([]) },
+    { type: "separator" },
+    ...all.map((p) => ({
+      label: p.name,
+      checked: chosen.includes(p.id),
+      onSelect: () => set(chosen.includes(p.id) ? chosen.filter((x) => x !== p.id) : [...chosen, p.id]),
+    })),
+  ];
+  return (
+    <div className="set-row">
+      <div className="set-row__text">
+        <span className="set-row__label">Projects assistants may see</span>
+        <span className="set-row__hint">
+          {chosen.length === 0
+            ? "All of them, unless an assistant is narrowed further below. Nothing can be seen in a project locked with a passkey."
+            : "Everything outside these is invisible, and no assistant can create a project while this is set."}
+        </span>
+      </div>
+      <div className="set-row__control">
+        <Dropdown items={items} minWidth={220}>
+          <Button size="sm" variant="ghost" icon={FolderCheck}>
+            {chosen.length === 0 ? "All projects" : `${chosen.length} project${chosen.length === 1 ? "" : "s"}`}
+          </Button>
+        </Dropdown>
+      </div>
     </div>
   );
 }
@@ -195,6 +256,31 @@ function SetUp() {
             </Tooltip>
           </div>
         </div>
+        {setup.bundlePath && (
+          <div className="set-row">
+            <Package size={14} className="faint" />
+            <div className="set-row__text">
+              <span className="set-row__label">Extension bundle</span>
+              <span className="set-row__hint">
+                Drag <span className="mono">kern.mcpb</span> onto Claude Desktop's Settings → Extensions to install it there instead. Same connection, no settings file to edit.
+              </span>
+            </div>
+            <div className="set-row__control">
+              <Button
+                size="sm"
+                onClick={async () => {
+                  try {
+                    await api.mcp.revealBundle();
+                  } catch (e) {
+                    toastError(describeError(e, "Couldn't show the bundle."));
+                  }
+                }}
+              >
+                Show in folder
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="set-row">
           <Terminal size={14} className="faint" />
           <div className="set-row__text">
@@ -316,17 +402,57 @@ function Activity() {
       {rows && rows.length > 0 ? (
         <ul className="mcp-audit">
           {rows.map((r) => (
-            <li key={r.id} data-ok={r.ok}>
-              <span className="mcp-audit__when tabular">{relativeTime(r.createdAt)}</span>
-              <span className="mcp-audit__who">{r.clientName}</span>
-              <span className="mcp-audit__tool mono">{r.tool.replace(/^kern_/, "")}</span>
-              <span className="mcp-audit__detail">{r.ok ? (r.detail ?? "") : (r.message ?? "Refused")}</span>
-            </li>
+            <AuditRow key={r.id} r={r} onDone={() => void refetch()} />
           ))}
         </ul>
       ) : (
         <p className="faint mcp-empty-line">Nothing yet. Every call an assistant makes is listed here.</p>
       )}
     </section>
+  );
+}
+
+/**
+ * One call, and - while it changed something that is still there to change
+ * back - the button that puts it back. One call is one batch, so a project
+ * that arrived with twenty tasks goes back as a project with twenty tasks.
+ */
+function AuditRow({ r, onDone }: { r: McpAuditEntry; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const revert = async () => {
+    const ok = await confirm({
+      title: `Put this back?`,
+      message: `Everything ${r.clientName} changed in this one call is undone - anything created goes to Trash, anything it overwrote goes back as it was. Changes made since, by you or by anything else, are overwritten.`,
+      confirmLabel: "Revert this batch",
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      toast(await api.mcp.revert(r.id));
+    } catch (e) {
+      toastError(describeError(e, "Couldn't put that back."));
+    } finally {
+      setBusy(false);
+      onDone();
+    }
+  };
+  return (
+    <li data-ok={r.ok} data-reverted={!!r.revertedAt}>
+      <span className="mcp-audit__when tabular">{relativeTime(r.createdAt)}</span>
+      <span className="mcp-audit__who">{r.clientName}</span>
+      <span className="mcp-audit__tool mono">{r.tool.replace(/^kern_/, "")}</span>
+      <span className="mcp-audit__detail">{r.ok ? (r.detail ?? "") : (r.message ?? "Refused")}</span>
+      <span className="mcp-audit__revert">
+        {r.revertedAt ? (
+          <Tooltip content={`Put back ${relativeTime(r.revertedAt)}`}>
+            <span>Reverted</span>
+          </Tooltip>
+        ) : r.revertable ? (
+          <Button size="sm" variant="ghost" icon={Undo2} disabled={busy} onClick={() => void revert()}>
+            Revert
+          </Button>
+        ) : null}
+      </span>
+    </li>
   );
 }

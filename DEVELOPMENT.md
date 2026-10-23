@@ -30,6 +30,12 @@ docker run --rm -v "$PWD:/repo:ro" -v "$PWD/release/linux:/out" \
   -v kern-cargo:/root/.cargo/registry -v kern-target:/build/src-tauri/target kern-linux
 ```
 
+`app:build` runs `npm run app:prepare` first (Tauri's `beforeBuildCommand`),
+which builds the front end and then `scripts/mcp-bundle.mjs` — the `kern-mcp`
+bridge sidecar and the `kern.mcpb` extension, both of which the installer
+ships. They land in `src-tauri/binaries/` (generated, and ignored by git), so
+a clean checkout needs no extra step.
+
 To run a development or test instance against a separate data folder (so your
 real data is never touched), set `KERN_DATA_DIR` before launching. Such an
 instance runs alongside the normal one and uses its own credential-store namespace.
@@ -110,11 +116,13 @@ src-tauri/src/
   db/                    connection setup, versioned migrations
   domain/                one module per area: pure service functions on &Connection plus
                          thin #[tauri::command] wrappers (incl. folders, storage, links,
-                         ai/{vault,provider,router,accounts}, git, github, repos, worktrees,
-                         workflow, sessions, workspace, milestones, devenv, pty, envvars,
-                         services, deps, health, catchup, fileindex)
+                         ai/{vault,provider,router,accounts}, mcp/ (the MCP server),
+                         git, github, repos, worktrees, workflow, sessions, workspace,
+                         milestones, devenv, pty, envvars, services, deps, health,
+                         catchup, fileindex)
   scheduler.rs           single low-frequency thread: briefings, reminders, backups, housekeeping
   window.rs              window state persistence, tray, close/minimise behaviour
+mcp-bridge/              its own crate, with no dependencies: ships as kern-mcp(.exe)
 ```
 
 - The frontend never issues SQL. It calls typed commands (`src/lib/ipc.ts`). Errors come
@@ -271,6 +279,14 @@ opt-in two-replica test against a running server (see KERNWEB's README).
   tokens, cloud accounts or settings. Every call is recorded in `mcp_audit`
   and shown in that tab. `domain/mcp/policy.rs` is the single gate, and
   `cargo test mcp` walks the whole tool surface against a locked project.
+  Two more controls sit beside the switch:
+  - **Ask before changes** (`mcp.confirmWrites`: never / deletes and rewrites
+    / every change) holds the call, brings the window forward and waits.
+    Two minutes of silence is a refusal, and the question is put before the
+    database lock is taken so a dialog can't stall the rest of the app.
+  - **Projects assistants may see** (`mcp.allowedProjects`) is the blanket
+    allowlist, on top of each client's own. While it is set, no assistant can
+    create a project.
 
 - Files that commonly hold secrets (`.env`, `*.pem`, `*.key`, `id_rsa`, anything
   named `credentials` or `secret` — `folders::is_sensitive`) are never offered to
@@ -389,6 +405,20 @@ Details that aren't obvious from the code:
   mermaid.ts` reads and writes Mermaid `flowchart`/`graph` text (shapes, arrow
   styles, both label forms, chains and `&` fan-outs) and ranks the graph into
   a layout; it never throws, returning a sentence for anything it can't read.
+
+- **AI assistants (MCP)**: see [MCP.md](MCP.md) for the whole design. Kern is
+  the *server*: `domain/mcp/` serves the protocol in-process, over a named
+  pipe (Windows) or Unix socket, because the open database connection belongs
+  to this process — a second process reading `kern.db` would walk past the
+  sync outbox, the passkey gate and every UI invalidation. The `kern-mcp`
+  bridge exists only because assistants launch a local server as a child
+  process and talk to it over stdin and stdout; it copies bytes and holds no
+  logic. `scripts/mcp-bundle.mjs` runs from `beforeBuildCommand` and writes
+  both the sidecar Tauri installs beside `kern.exe` and the `kern.mcpb`
+  extension bundle for Claude Desktop. Every write records what would undo
+  it, so one tool call — twenty tasks and a project included — goes back in
+  one press of **Revert**; `kern://mcp-applied` carries the batch id, which is
+  the audit row's own id, so the toast can offer it too.
 
 ### Kern Lite
 
