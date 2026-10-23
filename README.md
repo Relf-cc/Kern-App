@@ -35,11 +35,15 @@ collaborate with others in shared workspaces, in real time.
   and sync GitHub issues with your tasks. None of this appears unless you link code.
 - **Optional AI.** Bring your own API key for extras like a "catch me up" summary
   of a project, which shows exactly what would be sent before anything leaves your computer.
+  If you already have Claude Code installed, Kern can use that instead of a key, on
+  your own subscription, with nothing billed per token.
 - **Optional AI assistants.** Let Claude Desktop or Claude Code connect to Kern
   on your own subscription — no API key — and create tasks, notes, boards, whole
   projects and flowcharts in it. It's off until you turn it on, nothing connects
   until you approve it by name, Kern can ask you before anything is written, and
-  anything an assistant changes can be put back in one go.
+  anything an assistant changes can be put back in one go. Assistants that take a
+  web address instead of a command can use a local one, with a token, when you
+  switch it on.
 
 ## Install
 
@@ -129,11 +133,19 @@ linked the folder.
 - **Deleted items go to Trash first**, so you can restore them — including
   anything an AI assistant deletes.
 - **An AI assistant only reaches what you allow.** The connection is off by
-  default and is a local pipe only your user account can open, so there's no
-  port and nothing on the network. Each assistant is read-only until you say
-  otherwise, can be held to the projects you pick, never sees projects locked
-  with a passkey, and is never offered your files, terminal, keys or settings.
-  Every call it makes is listed in **Settings → API → Assistants**.
+  default and is a local pipe only your user account can open, so by default
+  there's no port and nothing on the network. Each assistant is read-only until
+  you say otherwise, can be held to the projects you pick, never sees projects
+  locked with a passkey, and is never offered your files, terminal, keys or
+  settings. Every call it makes is listed in **Settings → API → Assistants**.
+- **The local web address is a separate switch**, also off by default. When you
+  turn it on, Kern listens on this computer only — never on your network — and a
+  request has to carry a token kept in your system's secure storage. A page in a
+  browser is turned away whether it has the token or not.
+- **Nothing else runs unless you add it.** You can give Kern's own AI features
+  tools from MCP servers you add yourself. Those are programs on your computer and
+  they run as you, so they arrive switched off, nothing is offered to a model until
+  you switch them on, and every tool Kern runs is listed with how it went.
 - **Passwords and API keys** are kept in your system's secure storage (Windows
   Credential Manager, or GNOME Keyring / KWallet on Linux), never in Kern's own files.
 

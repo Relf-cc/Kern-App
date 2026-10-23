@@ -60,15 +60,17 @@ Memory after loading the 5,000-task list was about 368 MB private.
 
 | Artifact | Size |
 |---|---|
-| NSIS installer | 3.6 MB |
-| MSI installer | 4.4 MB |
-| Main JS chunk (React, query, dashboard, tasks) | 816 KB (256 KB gzip) - was 691 KB (211 KB gzip) before phase 2 |
+| `kern.exe` (release, LTO) | 13.6 MB - includes the MCP server, its HTTP endpoint and the MCP client (rmcp + axum) |
+| `kern-mcp.exe` (the bridge) | 0.15 MB |
+| NSIS installer | 3.6 MB (not re-measured since phase 2 of the MCP work) |
+| MSI installer | 4.4 MB (not re-measured since phase 2 of the MCP work) |
+| Main JS chunk (React, query, dashboard, tasks) | 886 KB (278 KB gzip) - was 816 KB (256 KB gzip), and 691 KB (211 KB gzip) before phase 2 |
 | Storage chart (Chart.js), lazy | 141 KB (49 KB gzip) |
-| API account pages, lazy | 19 KB (6 KB gzip) |
-| Project Code tab (GitHub & git), lazy | 18 KB (6 KB gzip) |
+| API account pages (incl. Assistants), lazy | 45 KB (13 KB gzip) - was 19 KB (6 KB gzip) before the MCP tab |
+| Project Code tab (GitHub & git), lazy | 29 KB (10 KB gzip) |
 | Whiteboard chunk (React Flow + editor), lazy | 271 KB (87 KB gzip) |
 | Notes chunk (TipTap/ProseMirror), lazy | 521 KB (181 KB gzip) |
-| Settings chunk, lazy | 42 KB |
+| Settings chunk, lazy | 145 KB (46 KB gzip) |
 
 ## Whiteboard stress test (600 objects, 400 connectors)
 

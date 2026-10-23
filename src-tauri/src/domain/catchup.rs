@@ -495,6 +495,8 @@ pub async fn catchup_ai(app: AppHandle, project_id: String, from: i64, to: i64, 
             project_id: Some(project_id.clone()),
             replayable: Some(true),
             purpose: Some("catchup".into()),
+            // As in assist: offered only if the user has servers switched on.
+            use_tools: Some(true),
             ..Default::default()
         };
         let outcome = router::route(s, &s.ai, &req)?;

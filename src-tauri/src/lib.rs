@@ -110,6 +110,9 @@ pub fn run() {
             cloud::start_worker(app.handle().clone());
             // Listens only when the assistant connection is switched on.
             mcp::sync(app.handle());
+            // The other direction: the AI router can now reach the user's
+            // own MCP servers, if they have added and enabled any.
+            mcp::outbound::attach(app.handle().clone());
             // kern://invite/<id> links. Installers register the scheme; this
             // also covers development runs and portable copies.
             let _ = app.deep_link().register_all();
@@ -246,6 +249,16 @@ pub fn run() {
             mcp::mcp_setup_info,
             mcp::mcp_setup_claude_desktop,
             mcp::mcp_reveal_bundle,
+            mcp::mcp_http_credentials,
+            mcp::mcp_http_rotate,
+            mcp::outbound::mcp_servers_list,
+            mcp::outbound::mcp_server_create,
+            mcp::outbound::mcp_server_update,
+            mcp::outbound::mcp_server_remove,
+            mcp::outbound::mcp_server_test,
+            mcp::outbound::mcp_server_calls,
+            mcp::outbound::mcp_servers_disconnect,
+            mcp::outbound::mcp_tool_catalog,
             // git & GitHub (repository-scoped)
             git::git_remote,
             git::git_status,

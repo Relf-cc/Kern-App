@@ -923,8 +923,8 @@ function useSections(apiTab?: ApiTab): Record<SettingsSection, GroupDef[] | Reac
           },
           {
             label: "AI assistants",
-            hint: "Off by default. An assistant you approve - Claude Desktop, Claude Code - reads and changes your work through its own program, so anything it reads leaves this computer with it. Kern never reaches out to it. You can be asked before anything is written, hold assistants to chosen projects, and put any one change back.",
-            keywords: "mcp model context protocol claude desktop claude code assistant connector tools pipe confirm approve writes allowed projects revert undo batch audit activity mcpb extension",
+            hint: "Off by default. An assistant you approve - Claude Desktop, Claude Code - reads and changes your work through its own program, so anything it reads leaves this computer with it. Kern never reaches out to it. You can be asked before anything is written, hold assistants to chosen projects, and put any one change back. The same page adds a local HTTP address for assistants that take a URL, and - the other way round - MCP servers of your own that Kern's AI features may call.",
+            keywords: "mcp model context protocol claude desktop claude code assistant connector tools pipe confirm approve writes allowed projects revert undo batch audit activity mcpb extension http port token bearer localhost endpoint url servers external tool calls subscription claude cli",
             control: (
               <Button size="sm" onClick={() => navigate({ name: "api", tab: "mcp" })}>
                 Assistants…

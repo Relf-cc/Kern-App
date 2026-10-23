@@ -12,7 +12,7 @@ import { invalidate } from "@/lib/query";
 import { useSetting, setSetting } from "@/stores/settings";
 import { useProjects } from "@/hooks/data";
 import { Button, IconButton } from "@/components/ui/Button";
-import { Select } from "@/components/ui/Controls";
+import { Checkbox, Select } from "@/components/ui/Controls";
 import { SNumber, SToggle } from "@/features/settings/controls";
 import { toastError } from "@/stores/toast";
 import { useAiAccounts } from "./AccountsTab";
@@ -94,6 +94,7 @@ function TestRequest() {
   const [accountId, setAccountId] = useState("auto");
   const [projectId, setProjectId] = useState("none");
   const [running, setRunning] = useState<string | null>(null);
+  const [useTools, setUseTools] = useState(false);
   const [out, setOut] = useState<AiRouteOutcome | null>(null);
 
   const send = async () => {
@@ -108,6 +109,7 @@ function TestRequest() {
         accountId: accountId === "auto" ? null : accountId,
         projectId: projectId === "none" ? null : projectId,
         purpose: "test",
+        useTools,
       });
       setOut(r);
     } catch (e) {
@@ -129,6 +131,7 @@ function TestRequest() {
           options={[{ value: "auto", label: "Route automatically" }, ...(accounts ?? []).map((a) => ({ value: a.id, label: `Start with ${a.name}` }))]}
         />
         <Select value={projectId} onChange={setProjectId} ariaLabel="Project" options={[{ value: "none", label: "No project" }, ...(projects ?? []).map((p) => ({ value: p.id, label: `As project: ${p.name}` }))]} />
+        <Checkbox checked={useTools} onChange={setUseTools} label="Offer my MCP servers" />
         <span className="spacer" />
         {running ? (
           <Button icon={Square} onClick={() => void api.ai.cancel(running)}>
@@ -142,6 +145,7 @@ function TestRequest() {
       </div>
       <span className="faint" style={{ fontSize: "var(--fs-xs)" }}>
         A real, billed request (up to 256 output tokens) - sent only when you press the button. Only request metadata is kept; the prompt and reply aren't stored.
+        {useTools ? " With servers offered, each round of tool calls is a request of its own." : ""}
       </span>
       {out && (
         <div className="ai-outcome" data-ok={out.ok || undefined}>

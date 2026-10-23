@@ -64,6 +64,9 @@ pub const DEVICE_TABLES: &[&str] = &[
     // An assistant approved here is approved on this computer only.
     "mcp_clients",
     "mcp_audit",
+    // And a server Kern can call is a program installed on this computer.
+    "mcp_servers",
+    "mcp_tool_calls",
 ];
 const PARKED: &str = "_device_";
 

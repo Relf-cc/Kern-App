@@ -4,11 +4,13 @@ How Kern becomes a Model Context Protocol server, so an AI client signed in
 with your own subscription — Claude Desktop, Claude Code — can create tasks,
 boards, flowcharts, notes and whole projects in Kern.
 
-Status: **phases 0–3 built** — the server runs in-app over a pipe, the
+Status: **phases 0–4 built** — the server runs in-app over a pipe, the
 bridge and a `.mcpb` extension ship beside it, the tool surface below is
 live, a write can be held until the user approves it, and any one call can be
-put back afterwards. Phase 4 (an HTTP transport, Kern as a *client*) is
-optional and not started; see [§9](#9-phasing).
+put back afterwards. Phase 4 added the three optional pieces: a loopback
+**HTTP endpoint** beside the pipe ([§11](#11-the-http-endpoint)), Kern as an
+MCP **client** ([§12](#12-kern-as-a-client)), and Kern's own AI features on
+the **`claude` CLI** rather than an API key ([Appendix B](#appendix-b--putting-your-subscription-behind-kerns-own-ai)).
 
 ## The one thing to get straight first
 
@@ -49,7 +51,7 @@ but relay stdin↔pipe.
 ```
 Claude Desktop ──stdio──▶ kern-mcp.exe ──named pipe──▶ Kern (rmcp ServerHandler → domain/*)
 Claude Code    ──stdio──▶ kern-mcp.exe ──────┘
-(phase 4)      ──http───────────────────────▶ 127.0.0.1 endpoint, same handler
+anything else  ──http──────────────────────▶ 127.0.0.1:8787/mcp, same handler (§11)
 ```
 
 The bridge is ~100 lines with no rmcp and no tokio — a blocking byte copy in
@@ -63,18 +65,19 @@ framing without an HTTP stack.
 | | |
 | --- | --- |
 | Crate | `rmcp` **3.6.0** (official SDK, published 2026-10-20) |
-| Features | `server`, `macros`, `schemars`, `transport-async-rw` |
+| Features | `server`, `macros`, `schemars`, `transport-async-rw`, plus `transport-streamable-http-server` (§11) and `client` + `transport-child-process` (§12) |
 | Protocol | implements **2026-07-28**, compatible back through 2025-11-25 and earlier |
-| Runtime | tokio — already present via Tauri; add the `net` feature for pipes |
-| axum | **not needed** with the pipe design (rmcp's HTTP server is a Tower service, so axum only arrives in phase 4) |
+| Runtime | tokio — already present via Tauri; add `net` for pipes and `process` for child servers |
+| axum | **0.8**, `default-features = false`, features `http1` + `tokio`. Only for §11: rmcp's Streamable HTTP server is a Tower service and something has to listen on the socket. Nothing else in Kern listens on a port |
 
 Two costs to accept up front:
 
 - **MSRV moves 1.80 → 1.88.** rmcp 3.6 is edition 2024. `rust-version` in
   `src-tauri/Cargo.toml` needs updating, and CI/toolchain with it.
-- **Binary growth.** `kern.exe` is 7.3 MB today (see PERFORMANCE.md); expect
-  ~9–10 MB plus the bridge. Re-measure and update that table — it is the
-  record.
+- **Binary growth.** Measured after phase 4: the release `kern.exe` is
+  **13.6 MB** and the bridge 0.15 MB, which is the row now in
+  PERFORMANCE.md — that table is the record. (The 7.3 MB figure elsewhere in
+  that document is the process's working set, not the file.)
 
 The 2026-07-28 revision removed the `initialize` handshake, sessions and
 `Mcp-Session-Id` entirely, and moved protocol version and client capabilities
@@ -94,9 +97,12 @@ src-tauri/src/domain/mcp/
   audit.rs     mcp_audit writes + activity log
   revert.rs    the undo plan a write records, and replaying it
   mermaid.rs   flowchart text → whiteboard scene (Rust port, §5)
+  http.rs      the loopback HTTP endpoint: token, Host/Origin rules, per-request service (§11)
+  outbound.rs  the other direction: the user's own servers, and the ToolRunner the AI router calls (§12)
 src-tauri/mcp-bridge/   new workspace member → kern-mcp(.exe)
 scripts/mcp-bundle.mjs  the bridge sidecar + the .mcpb, built before each tauri build
-src/features/ai/McpTab.tsx (+ mcp.css), src/features/ai/McpApproval.tsx
+src/features/ai/McpTab.tsx (+ mcp.css), src/features/ai/McpApproval.tsx,
+src/features/ai/McpServerDialog.tsx
 ```
 
 Plus the edits the house recipes demand:
@@ -110,12 +116,15 @@ Plus the edits the house recipes demand:
 
 New source files carry the `@Author` / `@Date` header.
 
-Two migrations: one appends `mcp_clients` and `mcp_audit`, and a later one
-adds `undo` and `reverted_at` to `mcp_audit` (§7). Both tables are
-**per-computer**,
-so both go in `DEVICE_TABLES` in `src-tauri/src/db/mod.rs` and *not* in
-`TABLES` in `domain/cloud/sync.rs`. A connected assistant is a property of this
-machine, not of your data.
+Four migrations: one appends `mcp_clients` and `mcp_audit`; a later one adds
+`undo` and `reverted_at` to `mcp_audit` (§7); phase 4 adds `mcp_servers` and
+`mcp_tool_calls` (§12), and rebuilds `ai_accounts` because its `provider`
+column was written with a `CHECK` naming the two API providers and SQLite
+cannot widen one in place (Appendix B). All four MCP tables are
+**per-computer**, so all four go in `DEVICE_TABLES` in
+`src-tauri/src/db/mod.rs` and *not* in `TABLES` in `domain/cloud/sync.rs`. A
+connected assistant is a property of this machine, not of your data; so is a
+program installed on it.
 
 ## 4. The tool surface
 
@@ -207,10 +216,11 @@ ACL'd to your user account. A token file in the data dir would be readable by
 anything already running as you, so it adds ceremony, not security — don't
 pretend otherwise. Identity is advisory: on first connection Kern raises
 **"*Claude Desktop* wants to connect to Kern"**, showing the client name and
-executable path, and remembers the decision in `mcp_clients`. A token *does*
-become necessary in phase 4, where any local process — including a web page —
-could POST to an HTTP port; the spec also requires `Origin` validation and
-localhost-only binding there.
+executable path, and remembers the decision in `mcp_clients`. A token *is*
+necessary on the HTTP endpoint, where any local process — including a web page —
+could POST to a port; `Origin` validation and localhost-only binding come with
+it. That is all in [§11](#11-the-http-endpoint), and it is why the endpoint has
+a switch of its own rather than riding on `mcp.enabled`.
 
 Everything else:
 
@@ -292,6 +302,16 @@ New keys: `mcp.enabled`, `mcp.confirmWrites`, `mcp.allowedProjects`,
 blanket allowlist: a project has to be inside it *and* inside the client's
 own list, and while it is set no assistant can create a project.
 
+Phase 4 added two more groups to the same tab. **Over HTTP** —
+`mcp.httpEnabled`, `mcp.httpPort`, the address, whether it is listening, and
+the token with **Show**, **Copy**, **New token** and the two ready-made
+client configurations ([§11](#11-the-http-endpoint)). **Servers Kern can
+use** — `mcp.toolsEnabled`, `ai.maxToolRounds`, the list of added servers with
+a switch and **Test** on each, and the log of what Kern ran on them
+([§12](#12-kern-as-a-client)). They sit below the assistants rather than
+beside them, because they are a different direction of travel and the page
+should read that way.
+
 ## 9. Phasing
 
 | Phase | Scope | Est. | |
@@ -300,9 +320,12 @@ own list, and while it is set no assistant can create a project.
 | **1 — core** | `policy.rs`, audit, migration, settings tab, read tools plus task/note/board writes, Claude Desktop config writer. | 2–3 days | done |
 | **2 — the asks** | `kern_project_setup` via `ProjectDoc`, mermaid port + shared fixture, milestones and labels, resources, prompts. | 2 days | done |
 | **3 — polish** | approval dialog, revert-batch, activity UI, `.mcpb`, `kern_project_update` and `kern_task_move`, DEVELOPMENT.md and README. | 1–2 days | done |
-| **4 — optional** | HTTP transport (+axum) for other clients; Kern as MCP client; Appendix B. | — | next |
+| **4 — optional** | HTTP transport (+axum) for other clients (§11); Kern as MCP client (§12); Appendix B. | 2–3 days | done |
 
-The surface in §4 is now complete, and so are the five settings keys.
+The surface in §4 is complete. The settings keys are now eight —
+`mcp.enabled`, `mcp.confirmWrites`, `mcp.allowedProjects`,
+`mcp.maxCallsPerMinute`, `mcp.auditDays`, `mcp.httpEnabled`, `mcp.httpPort`,
+`mcp.toolsEnabled` — plus `ai.maxToolRounds` on the AI side.
 
 ## 10. Risks
 
@@ -316,22 +339,157 @@ The surface in §4 is now complete, and so are the five settings keys.
 - **Agent writes at scale.** Twenty tasks from one call is normal, which is
   why the undo story went in at phase 3 rather than "someday": one call is
   one batch, and the whole batch goes back together.
+- **A port is not a pipe.** The pipe is ACL'd to one user account; a loopback
+  port is reachable by everything running as anyone on the machine, and by a
+  web page if nothing stops it. §11's token, `Host` allowlist and blanket
+  `Origin` refusal are all load-bearing, and the endpoint is off by default
+  with a switch of its own rather than riding on `mcp.enabled`.
+- **Somebody else's program.** §12 starts a command the user typed, as the
+  user. That cannot be made safe from inside Kern, so the UI says so plainly
+  rather than implying a sandbox, and the switches, the round cap and the
+  call log are what Kern does promise.
+- **The CLI is not an API.** Appendix B depends on a command's flags and on
+  the shape of its `--output-format json`, neither of which is a stable
+  contract. It is pinned down by tests on the parsing and the error
+  classification, and a CLI that has moved on shows up as a failed
+  connection test with whatever it actually said, not as a silent wrong
+  answer.
+
+## 11. The HTTP endpoint
+
+`domain/mcp/http.rs`. Claude Desktop still cannot reach a localhost HTTP
+server (§1), so this is not for it: it is for everything that takes a URL —
+Claude Code's `--transport http`, editors, a script. Same `ServerHandler`,
+same tools, same `policy.rs`, same audit.
+
+What changes is the boundary. The pipe needs no credential because the
+operating system is one. A port is not: everything running on this computer
+can reach `127.0.0.1`, and a page in a browser can try. So:
+
+- **A bearer token**, 244 bits from two UUIDv4s, held in the OS credential
+  store under its own service name — not beside the AI keys, because a token
+  for a local port and a key that spends money are different kinds of
+  secret. Compared in constant time, and accepted only in `Authorization`,
+  never in a query string that would end up in somebody's shell history.
+- **Loopback only.** The listener binds `127.0.0.1` and `[::1]` and never
+  `0.0.0.0`, and rmcp validates `Host` against the loopback names, which is
+  what stops a DNS name pointing here from being used to reach it.
+- **No browser at all.** `enforce_origin_validation()` with an empty
+  allowlist refuses any request carrying an `Origin` — which is every
+  request a browser can make. A web page cannot talk to Kern even holding
+  the token.
+
+Identity works as it does on the pipe: the caller names itself
+(`X-Kern-Client`, or `?client=`, else "HTTP assistant"), that name is
+registered in `mcp_clients` and has to be approved in the Assistants tab, and
+the name is advisory — the token is what got it in. The service is built
+**per request**, for the client the token's caller named, so revoking an
+assistant stops its next call rather than its next connection.
+
+`mcp_http_credentials` returns the token. That is a deliberate exception to
+"Rust owns secrets": a bearer token is no use until it is in the other
+program's configuration, and there is nowhere else for it to go. It is still
+made in the backend, kept in the credential store, and never written to
+SQLite, a log or a backup. **New token** throws it away and issues another,
+which locks every HTTP client out at once and leaves the pipe alone.
+
+Two keys, both off by default: `mcp.httpEnabled` and `mcp.httpPort` (8787,
+clamped to 1024–65535). The endpoint needs `mcp.enabled` *and*
+`mcp.httpEnabled`, because a port is a bigger thing to open than a pipe.
+Changing the port restarts the listener; a port already in use is reported in
+the tab rather than swallowed.
+
+## 12. Kern as a client
+
+`domain/mcp/outbound.rs`, and the only place in Kern where a model can reach
+outside Kern's own data. The user adds an MCP server — a command, its
+arguments, its environment, a working directory — and Kern starts it, speaks
+MCP to it over its stdin and stdout, and offers its tools to the model during
+an AI request that asked for them.
+
+```
+Kern (ai/router.rs tool loop) ──stdio──▶ npx @modelcontextprotocol/server-…
+                               ToolRunner → outbound.rs → rmcp client
+```
+
+The honest part first: `command` runs as the user, with everything that gives
+it. Kern cannot make that safe and the tab does not pretend to. What it does:
+
+- **Two switches.** `mcp.toolsEnabled` is off by default, and each server
+  arrives switched off. A tool is offered only when both are on.
+- **Asked for, not assumed.** `RouteRequest.useTools` has to be set; an
+  ordinary request carries no `tools` key at all.
+- **A bounded loop.** The model answers with tool calls, Kern runs them,
+  appends the results and asks again, up to `ai.maxToolRounds` (4). Each
+  round is a billed request in its own right and is recorded as one. Hit the
+  cap and Kern answers with the text it has, with a warning, rather than
+  erroring.
+- **No silent replay.** Once a tool has run the request stops being
+  replayable: failing over to another account would run that tool a second
+  time. `cargo test --lib ai::` holds that down.
+- **A log.** Every call lands in `mcp_tool_calls` — server, tool, outcome,
+  duration — the mirror of `mcp_audit`, pruned by the same setting.
+- **Nothing offered back.** Kern connects as `()`: no sampling, no roots, no
+  elicitation. A server cannot ask Kern's model to do anything.
+
+Two details worth knowing. Tools are namespaced `<slug>__<tool>` from the
+server's name, because a tool name may only hold letters, digits, `_` and
+`-`, and two servers may both offer `read_file`. And the catalogue the model
+is shown comes from the database — what each server offered when it was last
+tested — so building a prompt never waits on `npx` downloading something.
+
+Connections are kept open between calls (a loop makes several, and starting a
+server takes seconds) and shut down when a server is changed, disabled or
+removed. The router is synchronous by design, so a call is handed to the
+runtime and waited for on a channel rather than through `block_on`.
+
+A server's own API key goes in its `env`, which is stored as typed. That is
+deliberate: Kern's credential store holds *the user's* secrets, and a drawer
+full of other programs' keys with no way to use them except handing them to
+those programs is ceremony, not security. The dialog says so and suggests the
+environment the server already reads from.
 
 ## Appendix A — Kern as MCP *client* (the other direction)
 
-Later, `ai/router.rs` could call external MCP servers during assist and
-catch-up runs (add `transport-child-process` and `client` to the same rmcp
-dependency). Real value, but it spends API tokens and does not serve the goal
-above — park it behind phase 4.
+Built in phase 4 — see [§12](#12-kern-as-a-client).
 
 ## Appendix B — putting your subscription behind Kern's own AI
 
-To get *in-app* features onto the subscription rather than an API key: add a
-third variant to `Provider` in `domain/ai/provider.rs` that shells out to the
-local `claude` CLI (`claude -p --output-format json`) through a new `Transport`
-implementation. The seam is already clean — `Transport` is a one-method trait.
-Combined with the MCP server, Kern would effectively be driving itself. Check
-Anthropic's terms on programmatic use before building it.
+Built in phase 4. `Provider::ClaudeCli` is a third provider whose "API" is the
+`claude` command already installed on this computer, so breakdown, catch-up
+and the rundown can run on the user's own subscription with no API key and
+nothing billed per token.
+
+The seam was as clean as expected. `complete_request` builds the ordinary
+Anthropic body against a `claude-cli://local/v1/messages` URL, and
+`CliTransport` — the only new `Transport` — answers anything on that scheme by
+running the command and synthesising the response the API would have returned.
+Everything downstream (routing, failover, cooldowns, usage, budgets, the
+accounts UI) needed no changes at all. What *did* need changes was the idea
+that an account has a key: `Provider::needs_key()` is now asked before the
+vault is touched, before `clean_key`, in the connection test and in the
+security report, and `ai_accounts.provider` needed its `CHECK` widened
+(migration 12).
+
+Three more decisions worth recording:
+
+- **A model, not an agent.** The command runs with `--max-turns 1` in a
+  scratch directory. The CLI's own file and shell tools are powerful and
+  point at whatever directory it starts in; a request for a project
+  breakdown must not be able to become a file write. Kern's tools go the
+  other way round, through the server above.
+- **No cost, not zero cost.** `Provider::metered()` is false, so Kern
+  estimates no per-token cost and raises no budget warning in dollars rather
+  than reporting a price for something already paid for. Token counts are
+  still recorded.
+- **Finding it.** The usual installer puts `claude` somewhere a shell profile
+  adds to `PATH`, which a GUI process never reads. Kern tries the name, then
+  the places the installers use, and `KERN_CLAUDE_CLI` overrides the lot.
+
+Kern now drives itself in both directions: the CLI can be pointed at Kern's
+own MCP server, in which case a model on the subscription is reading and
+writing Kern through the tool surface in §4. Check Anthropic's terms on
+programmatic use before relying on that in anger.
 
 ## Sources
 

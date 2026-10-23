@@ -6,7 +6,7 @@
 //! interrupted migration rolls back cleanly; additionally a full database
 //! copy is taken before migrating an existing database (see `db::open`).
 
-pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7, MIGRATION_8, MIGRATION_9, MIGRATION_10];
+pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7, MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12];
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE settings (
@@ -988,4 +988,97 @@ const MIGRATION_10: &str = r#"
 -- that changed something, and goes when the row is pruned.
 ALTER TABLE mcp_audit ADD COLUMN undo TEXT;
 ALTER TABLE mcp_audit ADD COLUMN reverted_at INTEGER;
+"#;
+
+const MIGRATION_11: &str = r#"
+-- The other direction: MCP servers the user has added, which Kern's own AI
+-- features may call as tools. Per computer, like everything else here - a
+-- server is a program installed on this machine, and `command` is run as
+-- the user, so nothing is enabled until they say so.
+CREATE TABLE mcp_servers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  -- A short name the model sees its tools under (letters, digits, _).
+  slug TEXT NOT NULL,
+  command TEXT NOT NULL,
+  -- JSON arrays/objects: the arguments, and extra environment variables.
+  -- Non-secret only; a server needing a key reads it from the environment
+  -- the user set up, because Kern's credential store is not for programs.
+  args TEXT NOT NULL DEFAULT '[]',
+  env TEXT NOT NULL DEFAULT '{}',
+  cwd TEXT,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  -- What it offered at its last connection: JSON [{name, description, schema}].
+  tools TEXT,
+  -- unknown | ready | error
+  status TEXT NOT NULL DEFAULT 'unknown',
+  status_detail TEXT,
+  last_checked_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX idx_mcp_servers_slug ON mcp_servers(slug);
+
+-- Every tool Kern ran on one of those servers. The mirror of mcp_audit: that
+-- one is what an assistant did to Kern, this one is what Kern did elsewhere.
+-- Pruned on the same schedule, by the same setting.
+CREATE TABLE mcp_tool_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  server_id TEXT NOT NULL,
+  server_name TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  ok INTEGER NOT NULL DEFAULT 1,
+  message TEXT,
+  duration_ms INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_mcp_tool_calls_created ON mcp_tool_calls(created_at DESC);
+"#;
+
+const MIGRATION_12: &str = r#"
+-- A third provider: the `claude` command on this computer, used on the
+-- user's own subscription. The provider column was written with a CHECK
+-- naming the two API providers, and SQLite can't widen one in place, so the
+-- table is rebuilt. Nothing else about it changes - same columns, same
+-- order, same index - and `credential_ref` is still written for an account
+-- with no key, so the UNIQUE constraint holds either way.
+CREATE TABLE ai_accounts_new (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL CHECK (provider IN ('anthropic', 'openai', 'claude-cli')),
+  name TEXT NOT NULL,
+  credential_ref TEXT NOT NULL UNIQUE,
+  key_hint TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  priority REAL NOT NULL DEFAULT 0,
+  role TEXT NOT NULL DEFAULT 'none' CHECK (role IN ('primary', 'fallback', 'none')),
+  failover_eligible INTEGER NOT NULL DEFAULT 1,
+  preferred_model TEXT,
+  models TEXT,
+  organization_id TEXT,
+  project_ref TEXT,
+  observed_pool TEXT,
+  budget_limit REAL,
+  budget_unit TEXT CHECK (budget_unit IN ('tokens', 'usd')),
+  budget_warn_percent INTEGER NOT NULL DEFAULT 80,
+  budget_hard INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'unknown',
+  status_detail TEXT,
+  cooldown_until INTEGER,
+  rate_limits TEXT,
+  last_checked_at INTEGER,
+  last_used_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+-- Named rather than `SELECT *`, so this keeps working whatever a later
+-- reader assumes about column order.
+INSERT INTO ai_accounts_new (id, provider, name, credential_ref, key_hint, enabled, priority, role, failover_eligible, preferred_model, models,
+  organization_id, project_ref, observed_pool, budget_limit, budget_unit, budget_warn_percent, budget_hard, status,
+  status_detail, cooldown_until, rate_limits, last_checked_at, last_used_at, created_at, updated_at)
+  SELECT id, provider, name, credential_ref, key_hint, enabled, priority, role, failover_eligible, preferred_model, models,
+  organization_id, project_ref, observed_pool, budget_limit, budget_unit, budget_warn_percent, budget_hard, status,
+  status_detail, cooldown_until, rate_limits, last_checked_at, last_used_at, created_at, updated_at FROM ai_accounts;
+DROP TABLE ai_accounts;
+ALTER TABLE ai_accounts_new RENAME TO ai_accounts;
+CREATE INDEX idx_ai_accounts_order ON ai_accounts(provider, priority);
 "#;

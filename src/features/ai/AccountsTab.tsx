@@ -21,7 +21,7 @@ import { announce } from "@/lib/announce";
 import { relativeTime } from "@/lib/dates";
 import { AUTO_SCROLL, DROP_ANIMATION, DragPreview, SortableRow, announcements, restrictToVertical, useListSensors } from "@/components/layout/sortable";
 import { AddAccountDialog } from "./AddAccountDialog";
-import { PROVIDER_NAME, ProviderIcon, STATUS_HINT, STATUS_LABEL, VALIDATION_LABEL, effectiveStatus, formatTokens, formatUsd } from "./meta";
+import { effectiveStatus, formatTokens, formatUsd, NEEDS_KEY, PROVIDER_NAME, ProviderIcon, STATUS_HINT, STATUS_LABEL, VALIDATION_LABEL } from "./meta";
 
 export function useAiAccounts() {
   return useQuery({ queryKey: ["ai", "accounts"], queryFn: api.ai.list, staleTime: 30_000 });
@@ -85,7 +85,8 @@ function accountMenu(a: AiAccount, onReplace: () => void): MenuItems {
     a.role !== "primary" && { label: "Make primary", icon: Star, disabled: !a.enabled, onSelect: () => void patch(a, { role: "primary" }) },
     a.role === "none" && { label: "Use as fallback", icon: Undo2, onSelect: () => void patch(a, { role: "fallback" }) },
     a.role === "fallback" && { label: "Stop using as fallback", icon: Undo2, onSelect: () => void patch(a, { role: "none" }) },
-    { label: "Replace key…", icon: KeyRound, onSelect: onReplace },
+    // An account on the local command has no key to replace.
+    NEEDS_KEY[a.provider] && { label: "Replace key…", icon: KeyRound, onSelect: onReplace },
     { label: a.enabled ? "Disable" : "Enable", icon: Power, onSelect: () => void patch(a, { enabled: !a.enabled }) },
     { type: "separator" },
     { label: "Remove…", icon: Trash, danger: true, onSelect: () => void removeAccount(a) },
@@ -224,7 +225,8 @@ function AccountRow({ a, activeId, open, onToggle, onReplace }: { a: AiAccount; 
             {a.role === "fallback" && <span className="chip chip--outline">Fallback</span>}
           </span>
           <span className="ai-account__meta truncate">
-            {PROVIDER_NAME[a.provider]} · <span className="mono">{a.keyHint ? `••••${a.keyHint}` : "••••••••"}</span>
+            {PROVIDER_NAME[a.provider]}
+            {NEEDS_KEY[a.provider] ? <> · <span className="mono">{a.keyHint ? `••••${a.keyHint}` : "••••••••"}</span></> : <> · no key, no per-token cost</>}
             {a.preferredModel && <> · {a.preferredModel}</>}
             {a.month.requests > 0 && <> · {a.month.requests} requests this month</>}
           </span>

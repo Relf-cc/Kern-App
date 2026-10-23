@@ -102,15 +102,15 @@ export function SecurityTab() {
       <section>
         <div className="set-group__title">External coding agents</div>
         <div className="set-group">
-          {["Claude Code", "Codex CLI"].map((tool) => (
-            <div key={tool} className="set-row">
+          {AGENTS.map((a) => (
+            <div key={a.tool} className="set-row">
               <Terminal size={14} className="faint" />
               <div className="set-row__text">
-                <span className="set-row__label">{tool}</span>
-                <span className="set-row__hint">Not supported: Kern doesn't launch external agents, so it never reads or changes their sign-in or accounts.</span>
+                <span className="set-row__label">{a.tool}</span>
+                <span className="set-row__hint">{a.hint}</span>
               </div>
               <span className="set-row__control faint" style={{ fontSize: "var(--fs-sm)" }}>
-                Unsupported
+                {a.state}
               </span>
             </div>
           ))}
@@ -119,6 +119,27 @@ export function SecurityTab() {
     </div>
   );
 }
+
+/**
+ * What Kern does and doesn't do with a coding agent installed on this
+ * computer. Kern can run the `claude` command as a model for its own AI
+ * features, which is a one-turn text request in a scratch folder - it never
+ * reads or changes that command's sign-in, and the command is not used as an
+ * agent. Nothing here is about assistants connecting *to* Kern, which is the
+ * Assistants tab.
+ */
+const AGENTS = [
+  {
+    tool: "Claude Code",
+    state: "Usable as a provider",
+    hint: "Add a Claude subscription account under Accounts and Kern runs the claude command for its own AI features, on whatever that command is already signed in as. Kern never reads or changes that sign-in, and runs it as a model - one turn, in a scratch folder - not as an agent.",
+  },
+  {
+    tool: "Codex CLI",
+    state: "Unsupported",
+    hint: "Kern doesn't launch it, so it never reads or changes its sign-in or accounts.",
+  },
+];
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (

@@ -767,7 +767,9 @@ export type StorageCleanup = "favicons" | "expiredPreviews" | "temporary" | "unu
 
 // ------------------------------------------------------------ AI API accounts
 
-export type AiProvider = "anthropic" | "openai";
+/** `claude-cli` is the `claude` command on this computer, on the user's own
+ *  subscription: no key, and nothing billed per token. */
+export type AiProvider = "anthropic" | "openai" | "claude-cli";
 export type AiStatus = "ready" | "rate_limited" | "quota_reached" | "auth_error" | "permission_error" | "unavailable" | "disabled" | "unknown";
 export type AiErrorCategory =
   | "rate_limited"
@@ -861,6 +863,8 @@ export interface AiRouteRequest {
   projectId?: string | null;
   replayable?: boolean;
   purpose?: string;
+  /** Let the model call the MCP servers the user has added, if any are on. */
+  useTools?: boolean;
 }
 
 export interface AiRouteOutcome {
@@ -875,6 +879,8 @@ export interface AiRouteOutcome {
   stopReason: string | null;
   attempts: { accountId: string; accountName: string; model: string; ok: boolean; category: AiErrorCategory | null; message: string | null; durationMs: number }[];
   switches: { from: string; to: string; reason: string }[];
+  /** Tools the model asked for and Kern ran, in order. */
+  toolRuns: { name: string; ok: boolean; output: string }[];
   warnings: string[];
   error: AiFailure | null;
 }
@@ -954,7 +960,35 @@ export interface McpStatus {
   /** Whether the local listener is up right now. */
   running: boolean;
   endpoint: string;
+  http: McpHttpStatus;
   clients: McpClient[];
+}
+
+/** The loopback HTTP endpoint beside the pipe, for assistants that take a URL. */
+export interface McpHttpStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  url: string;
+  /** Whether a token exists. Never the token itself. */
+  tokenSet: boolean;
+  /** Why it isn't listening, when it was asked to. */
+  problem: string | null;
+}
+
+/**
+ * The HTTP endpoint's bearer token, asked for on purpose. It has to be
+ * pasted into the other program's configuration to be any use, so this is
+ * the one secret Kern hands back; it lives in the OS credential store and
+ * never in the database or a backup.
+ */
+export interface McpHttpCredentials {
+  token: string;
+  url: string;
+  /** The one-line command for Claude Code. */
+  claudeCode: string;
+  /** The `mcpServers` fragment, for a client configured by file. */
+  config: string;
 }
 
 export interface McpAuditEntry {
@@ -982,6 +1016,56 @@ export interface McpConfirmRequest {
   destructive: boolean;
   /** How long Kern waits before taking silence as no. */
   seconds: number;
+}
+
+/** One tool an added server offers. */
+export interface McpServerTool {
+  name: string;
+  description: string;
+  schema: unknown;
+}
+
+/**
+ * An MCP server the user has added, which Kern's own AI features may call as
+ * tools. The other direction from {@link McpClient}: here Kern is the client
+ * and starts a program on this computer, so nothing runs until both
+ * `mcp.toolsEnabled` and the server's own switch are on.
+ */
+export interface McpServer {
+  id: string;
+  name: string;
+  /** What the model sees its tools under: `<slug>__<tool>`. */
+  slug: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd: string | null;
+  enabled: boolean;
+  tools: McpServerTool[];
+  status: "unknown" | "ready" | "error";
+  statusDetail: string | null;
+  lastCheckedAt: number | null;
+  createdAt: number;
+  /** Whether Kern has it running right now. */
+  connected: boolean;
+}
+
+/** One tool Kern ran on an added server. */
+export interface McpToolCall {
+  id: number;
+  serverId: string;
+  serverName: string;
+  tool: string;
+  ok: boolean;
+  message: string | null;
+  durationMs: number | null;
+  createdAt: number;
+}
+
+/** What the model would be told it can do, as it stands. */
+export interface McpToolCatalog {
+  enabled: boolean;
+  tools: { name: string; description: string }[];
 }
 
 export interface McpSetup {

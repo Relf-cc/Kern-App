@@ -9,9 +9,27 @@
 // tools. Kern is the server here; nothing reaches out.
 
 import { useEffect, useState } from "react";
-import { Ban, Bot, Check, Copy, FolderCheck, Package, ShieldCheck, Terminal, Trash, Undo2 } from "lucide-react";
+import {
+  Ban,
+  Bot,
+  Check,
+  Copy,
+  Eye,
+  EyeOff,
+  FolderCheck,
+  Globe,
+  Package,
+  Pencil,
+  Play,
+  Plug,
+  RefreshCw,
+  ShieldCheck,
+  Terminal,
+  Trash,
+  Undo2,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import type { McpAuditEntry, McpClient, McpScope } from "@/lib/types";
+import type { McpAuditEntry, McpClient, McpHttpCredentials, McpHttpStatus, McpScope, McpServer } from "@/lib/types";
 import { api, describeError } from "@/lib/ipc";
 import { invalidate } from "@/lib/query";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -24,6 +42,7 @@ import { setSetting, useSetting } from "@/stores/settings";
 import { useProjects } from "@/hooks/data";
 import { relativeTime } from "@/lib/dates";
 import { SNumber, SSelect } from "@/features/settings/controls";
+import { McpServerDialog } from "./McpServerDialog";
 import "./mcp.css";
 
 const GUARANTEES = [
@@ -35,6 +54,7 @@ const GUARANTEES = [
   "Deleting through an assistant moves items to Trash; nothing an assistant does destroys data.",
   "Linked folders, the terminal, environment variables, tokens and your settings are not exposed at all.",
   "Every call is listed below with what it touched - arguments are described, never copied.",
+  "The HTTP endpoint is separate, off by default, bound to this computer only, and needs a token no web page can use.",
 ];
 
 const STATUS_LABEL: Record<string, string> = { pending: "Waiting for approval", approved: "Connected", revoked: "Blocked" };
@@ -152,8 +172,10 @@ export function McpTab() {
       </section>
 
       {enabled && <SetUp />}
+      {enabled && <OverHttp status={status?.http} />}
       <Clients clients={status?.clients ?? []} loading={isLoading} />
       {enabled && <Activity />}
+      <Servers />
 
       <section>
         <div className="set-group__title">What an assistant can reach</div>
@@ -295,6 +317,362 @@ function SetUp() {
         </div>
       </div>
     </section>
+  );
+}
+
+/**
+ * The loopback HTTP endpoint, for assistants that take a URL rather than a
+ * command to run. Its own switch, because a port is a bigger thing to open
+ * than a pipe: the pipe is owned by this user account, while anything on
+ * this computer can reach a port. Hence the token, which this is the only
+ * place in Kern that shows a secret - there is nowhere else for it to go
+ * but the other program's configuration.
+ */
+function OverHttp({ status }: { status?: McpHttpStatus }) {
+  const on = useSetting("mcp.httpEnabled");
+  const port = useSetting("mcp.httpPort");
+  const [busy, setBusy] = useState(false);
+  const [shown, setShown] = useState<McpHttpCredentials | null>(null);
+  const [reveal, setReveal] = useState(false);
+
+  const toggle = async (next: boolean) => {
+    setBusy(true);
+    try {
+      await setSetting("mcp.httpEnabled", next);
+      await api.mcp.sync();
+      if (!next) {
+        setShown(null);
+        setReveal(false);
+      }
+    } catch (e) {
+      toastError(describeError(e, "Couldn't change the endpoint."));
+    } finally {
+      setBusy(false);
+      invalidate("mcp");
+    }
+  };
+
+  // The port control writes a setting and nothing else, so the listener is
+  // asked to catch up here rather than being moved from two places.
+  useEffect(() => {
+    if (!on || !status || status.port === port) return;
+    const t = window.setTimeout(() => void api.mcp.sync().then(() => invalidate("mcp")), 600);
+    return () => window.clearTimeout(t);
+  }, [on, port, status]);
+
+  const load = async () => {
+    try {
+      const got = await api.mcp.httpCredentials();
+      setShown(got);
+      return got;
+    } catch (e) {
+      toastError(describeError(e, "Couldn't read the token."));
+      return null;
+    }
+  };
+
+  const rotate = async () => {
+    const ok = await confirm({
+      title: "Issue a new token?",
+      message: "Everything connected over HTTP stops working until you give it the new token. The pipe is unaffected.",
+      confirmLabel: "New token",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      setShown(await api.mcp.httpRotate());
+      setReveal(true);
+      toast("New token issued");
+    } catch (e) {
+      toastError(describeError(e, "Couldn't issue a new token."));
+    } finally {
+      invalidate("mcp");
+    }
+  };
+
+  const copy = async (what: "token" | "command" | "config") => {
+    const got = shown ?? (await load());
+    if (!got) return;
+    const text = what === "token" ? got.token : what === "command" ? got.claudeCode : got.config;
+    await navigator.clipboard.writeText(text);
+    toast(what === "token" ? "Token copied" : what === "command" ? "Command copied" : "Configuration copied");
+  };
+
+  return (
+    <section>
+      <div className="set-group__title">Over HTTP</div>
+      <div className="set-group">
+        <div className="set-row">
+          <Globe size={14} className="faint" />
+          <div className="set-row__text">
+            <span className="set-row__label">Also listen on a local address</span>
+            <span className="set-row__hint">
+              For assistants that take a URL rather than a command to run. Kern listens on this computer only - never on your network - and
+              a request has to carry the token below. A page in a browser is refused outright, token or no token.
+            </span>
+          </div>
+          <div className="set-row__control">
+            <Switch checked={on} disabled={busy} onChange={(v) => void toggle(v)} label="Also listen on a local address" />
+          </div>
+        </div>
+        {on && (
+          <>
+            <div className="set-row">
+              <div className="set-row__text">
+                <span className="set-row__label">Address</span>
+                <span className="set-row__hint mono mcp-command">{status?.url ?? "…"}</span>
+              </div>
+              <div className="set-row__control row" style={{ gap: 6 }}>
+                <SNumber k="mcp.httpPort" min={1024} max={65535} width={84} />
+                <span className="mcp-status" data-status={status?.running ? "on" : "off"}>
+                  <span className="mcp-status__dot" />
+                  {status?.running ? "Listening" : "Stopped"}
+                </span>
+              </div>
+            </div>
+            {status?.problem && (
+              <div className="set-row">
+                <span className="set-row__hint mcp-problem">{status.problem}</span>
+              </div>
+            )}
+            <div className="set-row">
+              <div className="set-row__text">
+                <span className="set-row__label">Token</span>
+                <span className="set-row__hint mono mcp-command">
+                  {reveal && shown ? shown.token : "••••••••••••••••••••••••••••••••"}
+                </span>
+                <span className="set-row__hint">
+                  Kept in this computer's credential store, never in Kern's database or a backup. Treat it as a password: anything holding it
+                  can reach whatever you have approved below.
+                </span>
+              </div>
+              <div className="set-row__control row" style={{ gap: 6 }}>
+                <Tooltip content={reveal ? "Hide" : "Show"}>
+                  <IconButton
+                    icon={reveal ? EyeOff : Eye}
+                    label={reveal ? "Hide token" : "Show token"}
+                    size="sm"
+                    onClick={async () => {
+                      if (!reveal && !shown) await load();
+                      setReveal(!reveal);
+                    }}
+                  />
+                </Tooltip>
+                <Button size="sm" icon={Copy} onClick={() => void copy("token")}>
+                  Copy
+                </Button>
+                <Tooltip content="Issue a new token">
+                  <IconButton icon={RefreshCw} label="Issue a new token" size="sm" onClick={() => void rotate()} />
+                </Tooltip>
+              </div>
+            </div>
+            <div className="set-row">
+              <Terminal size={14} className="faint" />
+              <div className="set-row__text">
+                <span className="set-row__label">Connect a client</span>
+                <span className="set-row__hint">
+                  The command for Claude Code, or the <span className="mono">mcpServers</span> fragment for a client configured by file. Both
+                  include the token, so treat what you paste as a password.
+                </span>
+              </div>
+              <div className="set-row__control row" style={{ gap: 6 }}>
+                <Button size="sm" icon={Copy} onClick={() => void copy("command")}>
+                  Copy command
+                </Button>
+                <Button size="sm" variant="ghost" icon={Copy} onClick={() => void copy("config")}>
+                  Copy JSON
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The other direction: MCP servers the user has added, which Kern's own AI
+ * features may call as tools. Kern starts these programs, so the copy is
+ * blunt about what that means, and nothing runs until both this switch and
+ * the server's own are on.
+ */
+function Servers() {
+  const on = useSetting("mcp.toolsEnabled");
+  const { data: servers, isLoading } = useQuery({ queryKey: ["mcp", "servers"], queryFn: api.mcp.servers, refetchInterval: 20_000 });
+  // What the model would actually be told it can do, asked of the backend
+  // rather than worked out here, so the names are the ones it sees.
+  const { data: catalog } = useQuery({ queryKey: ["mcp", "catalog"], queryFn: api.mcp.toolCatalog });
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<McpServer | null>(null);
+  const list = servers ?? [];
+  const offered = catalog?.tools ?? [];
+
+  return (
+    <section>
+      <div className="set-group__title">Servers Kern can use</div>
+      <div className="set-group">
+        <div className="set-row">
+          <Plug size={14} className="faint" />
+          <div className="set-row__text">
+            <span className="set-row__label">Let Kern's AI features use these servers</span>
+            <span className="set-row__hint">
+              The opposite direction to everything above: Kern starts these programs on this computer and offers their tools to the model
+              during an assist or catch-up run. A server runs as you, with everything that gives it, so add only ones you would run yourself.
+            </span>
+            {on && offered.length > 0 && (
+              <span className="set-row__hint mono mcp-command">
+                {offered.length} tool{offered.length === 1 ? "" : "s"}: {offered.map((t) => t.name).join(", ")}
+              </span>
+            )}
+          </div>
+          <div className="set-row__control">
+            <Switch
+              checked={on}
+              onChange={(v) => {
+                void setSetting("mcp.toolsEnabled", v);
+                if (!v) void api.mcp.serversDisconnect();
+              }}
+              label="Let Kern's AI features use these servers"
+            />
+          </div>
+        </div>
+        {on && (
+          <div className="set-row">
+            <div className="set-row__text">
+              <span className="set-row__label">Rounds of tool calls per request</span>
+              <span className="set-row__hint">
+                Each round is a request of its own to your AI provider, and is billed as one. Kern stops after this many and answers with what
+                it has.
+              </span>
+            </div>
+            <div className="set-row__control">
+              <SNumber k="ai.maxToolRounds" min={1} max={12} suffix="rounds" width={84} />
+            </div>
+          </div>
+        )}
+      </div>
+      {isLoading ? (
+        <Skeleton height={60} />
+      ) : list.length === 0 ? (
+        <EmptyState icon={Plug} title="No servers added" compact action={<Button size="sm" onClick={() => setAdding(true)}>Add a server…</Button>}>
+          An MCP server is a small program - a filesystem reader, a browser, an issue tracker - that offers tools over the same protocol Kern
+          speaks.
+        </EmptyState>
+      ) : (
+        <>
+          <div className="set-group">
+            {list.map((s) => (
+              <ServerRow key={s.id} s={s} onEdit={() => setEditing(s)} />
+            ))}
+          </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <Button size="sm" variant="ghost" onClick={() => setAdding(true)}>
+              Add a server…
+            </Button>
+          </div>
+        </>
+      )}
+      {on && list.some((s) => s.enabled) && <ToolCalls />}
+      {adding && <McpServerDialog onClose={() => setAdding(false)} />}
+      {editing && <McpServerDialog server={editing} onClose={() => setEditing(null)} />}
+    </section>
+  );
+}
+
+function ServerRow({ s, onEdit }: { s: McpServer; onEdit: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const change = async (patch: Parameters<typeof api.mcp.serverUpdate>[1]) => {
+    try {
+      await api.mcp.serverUpdate(s.id, patch);
+    } catch (e) {
+      toastError(describeError(e));
+    } finally {
+      invalidate("mcp");
+    }
+  };
+  const test = async () => {
+    setBusy(true);
+    try {
+      const after = await api.mcp.serverTest(s.id);
+      toast(`${after.name} offered ${after.tools.length} tool${after.tools.length === 1 ? "" : "s"}`);
+    } catch (e) {
+      toastError(describeError(e, "It didn't start."));
+    } finally {
+      setBusy(false);
+      invalidate("mcp");
+    }
+  };
+  const remove = async () => {
+    const ok = await confirm({
+      title: `Remove ${s.name}?`,
+      message: "Kern forgets the command and what it offered. The program itself is left alone.",
+      confirmLabel: "Remove server",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.mcp.serverRemove(s.id);
+      toast(`Removed ${s.name}`);
+    } catch (e) {
+      toastError(describeError(e));
+    } finally {
+      invalidate("mcp");
+    }
+  };
+  const menu = (): MenuItems => [
+    { label: "Test…", icon: Play, onSelect: () => void test() },
+    { label: "Edit…", icon: Pencil, onSelect: onEdit },
+    { type: "separator" },
+    { label: "Remove…", icon: Trash, danger: true, onSelect: () => void remove() },
+  ];
+  const state = s.status === "error" ? "revoked" : s.connected ? "on" : s.status === "ready" ? "approved" : "off";
+  return (
+    <div className="set-row">
+      <Plug size={14} className="faint" />
+      <div className="set-row__text">
+        <span className="set-row__label">{s.name}</span>
+        <span className="set-row__hint mono mcp-command">
+          {s.command}
+          {s.args.length > 0 ? ` ${s.args.join(" ")}` : ""}
+        </span>
+        <span className="set-row__hint row" style={{ gap: 6 }}>
+          <span className="mcp-status" data-status={state}>
+            <span className="mcp-status__dot" />
+            {s.status === "error" ? "Wouldn't start" : s.connected ? "Running" : s.tools.length > 0 ? `${s.tools.length} tools` : "Not tested"}
+          </span>
+          {s.status === "error" && s.statusDetail ? <span className="mcp-problem">{s.statusDetail}</span> : null}
+          {s.lastCheckedAt ? `· tested ${relativeTime(s.lastCheckedAt)}` : null}
+        </span>
+      </div>
+      <div className="set-row__control row" style={{ gap: 6 }}>
+        <Switch checked={s.enabled} disabled={busy} onChange={(v) => void change({ enabled: v })} label={`Use ${s.name}`} />
+        <Dropdown items={menu}>
+          <Button size="sm" variant="ghost">
+            Manage
+          </Button>
+        </Dropdown>
+      </div>
+    </div>
+  );
+}
+
+/** What Kern ran elsewhere - the mirror of the activity list above. */
+function ToolCalls() {
+  const { data: rows } = useQuery({ queryKey: ["mcp", "tool-calls"], queryFn: () => api.mcp.serverCalls(40), refetchInterval: 20_000 });
+  if (!rows || rows.length === 0) return null;
+  return (
+    <ul className="mcp-audit" style={{ marginTop: 8 }}>
+      {rows.map((r) => (
+        <li key={r.id} data-ok={r.ok}>
+          <span className="mcp-audit__when tabular">{relativeTime(r.createdAt)}</span>
+          <span className="mcp-audit__who">{r.serverName}</span>
+          <span className="mcp-audit__tool mono">{r.tool}</span>
+          <span className="mcp-audit__detail">{r.ok ? `${r.durationMs ?? 0} ms` : (r.message ?? "Failed")}</span>
+          <span className="mcp-audit__revert" />
+        </li>
+      ))}
+    </ul>
   );
 }
 

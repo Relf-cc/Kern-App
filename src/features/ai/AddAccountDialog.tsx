@@ -3,7 +3,7 @@
  * @Date 2026-10-12
  */
 
-import { CircleAlert, CircleCheck, KeyRound, LoaderCircle } from "lucide-react";
+import { CircleAlert, CircleCheck, KeyRound, LoaderCircle, TerminalSquare } from "lucide-react";
 import { useState } from "react";
 import type { AiProvider, AiValidation } from "@/lib/types";
 import { api, describeError } from "@/lib/ipc";
@@ -12,12 +12,17 @@ import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
 import { Segmented, Select } from "@/components/ui/Controls";
 import { toast, toastError } from "@/stores/toast";
-import { PROVIDER_NAME, ProviderIcon, SUGGESTED_MODEL, VALIDATION_LABEL } from "./meta";
+import { NEEDS_KEY, PROVIDER_HINT, PROVIDER_NAME, ProviderIcon, SUGGESTED_MODEL, VALIDATION_LABEL } from "./meta";
 
 /**
  * Add an API credential profile, or replace a profile's key. The key can be
  * tested before saving (a no-cost "list models" call) and is then sent once
  * to the OS credential store. It's never shown again.
+ *
+ * One provider takes no key at all: "Claude subscription" is the `claude`
+ * command on this computer, already signed in. There is nothing to type and
+ * nothing to store, so the key field goes away and the test simply checks
+ * that the command runs.
  */
 export function AddAccountDialog({ onClose, replaceFor }: { onClose: () => void; replaceFor?: { id: string; name: string; provider: AiProvider } }) {
   const [provider, setProvider] = useState<AiProvider>(replaceFor?.provider ?? "anthropic");
@@ -31,14 +36,18 @@ export function AddAccountDialog({ onClose, replaceFor }: { onClose: () => void;
   const [result, setResult] = useState<AiValidation | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const needsKey = NEEDS_KEY[provider];
+
   const changeProvider = (p: AiProvider) => {
     setProvider(p);
     setResult(null);
     setModel(SUGGESTED_MODEL[p] ?? "");
+    if (!NEEDS_KEY[p]) setKey("");
+    if (!name.trim() && !NEEDS_KEY[p]) setName(PROVIDER_NAME[p]);
   };
 
   const test = async () => {
-    if (!key.trim()) return;
+    if (needsKey && !key.trim()) return;
     setTesting(true);
     try {
       const r = await api.ai.testKey(provider, key, org || null, project || null);
@@ -76,7 +85,7 @@ export function AddAccountDialog({ onClose, replaceFor }: { onClose: () => void;
   };
 
   const ok = result?.outcome === "authenticated" || result?.outcome === "quota" || result?.outcome === "rate_limited";
-  const canSave = !!key.trim() && (!!replaceFor || !!name.trim()) && !saving;
+  const canSave = (!needsKey || !!key.trim()) && (!!replaceFor || !!name.trim()) && !saving;
 
   return (
     <Dialog
@@ -86,8 +95,14 @@ export function AddAccountDialog({ onClose, replaceFor }: { onClose: () => void;
       className="ai-dialog"
       footer={
         <>
-          <Button variant="ghost" icon={testing ? LoaderCircle : KeyRound} onClick={() => void test()} disabled={!key.trim() || testing} style={{ marginRight: "auto" }}>
-            {testing ? "Testing…" : "Test connection"}
+          <Button
+            variant="ghost"
+            icon={testing ? LoaderCircle : needsKey ? KeyRound : TerminalSquare}
+            onClick={() => void test()}
+            disabled={(needsKey && !key.trim()) || testing}
+            style={{ marginRight: "auto" }}
+          >
+            {testing ? "Testing…" : needsKey ? "Test connection" : "Check the command"}
           </Button>
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -102,7 +117,7 @@ export function AddAccountDialog({ onClose, replaceFor }: { onClose: () => void;
         <Segmented
           value={provider}
           onChange={changeProvider}
-          options={(["anthropic", "openai"] as AiProvider[]).map((p) => ({ value: p, label: PROVIDER_NAME[p] }))}
+          options={(["anthropic", "openai", "claude-cli"] as AiProvider[]).map((p) => ({ value: p, label: PROVIDER_NAME[p] }))}
           ariaLabel="Provider"
         />
       )}
@@ -112,23 +127,33 @@ export function AddAccountDialog({ onClose, replaceFor }: { onClose: () => void;
           <input className="input grow" autoFocus placeholder="Account name - Personal, Work, Secondary…" aria-label="Account name" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
       )}
-      <div className="field">
-        <input
-          className="input mono"
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          autoFocus={!!replaceFor}
-          aria-label="API key"
-          placeholder={provider === "anthropic" ? "API key (sk-ant-…)" : "API key (sk-…)"}
-          value={key}
-          onChange={(e) => {
-            setKey(e.target.value);
-            setResult(null);
-          }}
-        />
-        <span className="ai-dialog__hint">Stored in your system's credential store - never in Kern's database, backups or logs. This is an API key, not a subscription login.</span>
-      </div>
+      {needsKey ? (
+        <div className="field">
+          <input
+            className="input mono"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus={!!replaceFor}
+            aria-label="API key"
+            placeholder={provider === "anthropic" ? "API key (sk-ant-…)" : "API key (sk-…)"}
+            value={key}
+            onChange={(e) => {
+              setKey(e.target.value);
+              setResult(null);
+            }}
+          />
+          <span className="ai-dialog__hint">Stored in your system's credential store - never in Kern's database, backups or logs. This is an API key, not a subscription login.</span>
+        </div>
+      ) : (
+        <div className="field">
+          <span className="ai-dialog__hint">
+            {PROVIDER_HINT[provider]} Kern runs it as a model and nothing more: one turn, in a scratch folder, so a request can't turn into
+            the command reading or writing your files. If Kern can't find it, set <span className="mono">KERN_CLAUDE_CLI</span> to the full
+            path.
+          </span>
+        </div>
+      )}
       {result && (
         <div className="ai-test-result" data-ok={ok || undefined} role="status">
           {ok ? <CircleCheck size={15} /> : <CircleAlert size={15} />}

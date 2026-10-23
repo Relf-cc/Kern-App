@@ -19,16 +19,28 @@
 //! stdin and stdout. It copies bytes to this pipe and back; it holds no
 //! logic and reads no data.
 //!
+//! There is a second way in, off by default: `http`, a loopback endpoint
+//! for assistants that take a URL rather than a command to run. A port has
+//! no owner the way a pipe does, so that one carries a bearer token, refuses
+//! anything with an `Origin`, and is otherwise the same server — same
+//! policy, same approvals, same audit.
+//!
+//! The other direction is `outbound`: the user's own MCP servers, which
+//! Kern's AI features may call as tools. That is Kern as a *client*, and it
+//! is the only part of this module where Kern starts a program.
+//!
 //! Layout: `clients` (who may connect), `policy` (may they do this?),
 //! `confirm` (should we ask first?), `tools` (what they can do), `server`
 //! (the rmcp wiring, the resources and the prompts), `mermaid` (flowchart
-//! text ↔ whiteboard objects), `audit` (what they did) and `revert` (putting
-//! one call back).
+//! text ↔ whiteboard objects), `audit` (what they did), `revert` (putting
+//! one call back), `http` (the endpoint) and `outbound` (other servers).
 
 pub mod audit;
 pub mod clients;
 pub mod confirm;
+pub mod http;
 pub mod mermaid;
+pub mod outbound;
 pub mod policy;
 pub mod revert;
 pub mod server;
@@ -108,6 +120,10 @@ pub struct McpState {
     bound: AtomicBool,
     /// Write confirmations waiting for an answer from the window.
     pub asks: confirm::Asks,
+    /// The HTTP endpoint beside the pipe, while it is listening.
+    pub http: http::HttpState,
+    /// Connections to the user's own MCP servers, kept open between calls.
+    pub servers: outbound::Sessions,
 }
 
 impl McpState {
@@ -126,6 +142,8 @@ pub fn sync(app: &AppHandle) {
     } else {
         stop(app);
     }
+    // The endpoint has a switch of its own and reads both.
+    http::sync(app);
 }
 
 pub fn start(app: &AppHandle) {
@@ -346,28 +364,59 @@ pub struct McpStatus {
     pub enabled: bool,
     pub running: bool,
     pub endpoint: String,
+    /// The HTTP endpoint beside the pipe, and why it isn't up if it should be.
+    pub http: http::HttpStatus,
     pub clients: Vec<clients::McpClient>,
+}
+
+/// Everything the Assistants tab shows about the server itself, read in one
+/// pass so the switch and the status can't disagree.
+fn snapshot(state: &AppState) -> AppResult<McpStatus> {
+    let running = state.mcp.running();
+    state.with(|c| {
+        Ok(McpStatus {
+            enabled: policy::enabled(c),
+            running,
+            endpoint: endpoint(),
+            http: http::status(c, state),
+            clients: clients::list(c)?,
+        })
+    })
 }
 
 // ------------------------------------------------------------ commands
 
 #[tauri::command]
 pub fn mcp_status(state: State<AppState>) -> AppResult<McpStatus> {
-    let running = state.mcp.running();
-    state.with(|c| {
-        Ok(McpStatus { enabled: policy::enabled(c), running, endpoint: endpoint(), clients: clients::list(c)? })
-    })
+    snapshot(&state)
 }
 
-/// Brings the listener in line with the setting (called after the switch is
-/// flipped, and at startup).
+/// Brings the listener and the endpoint in line with the settings (called
+/// after either switch is flipped, and at startup).
 #[tauri::command]
 pub fn mcp_sync(app: AppHandle, state: State<AppState>) -> AppResult<McpStatus> {
     sync(&app);
-    let running = state.mcp.running();
-    state.with(|c| {
-        Ok(McpStatus { enabled: policy::enabled(c), running, endpoint: endpoint(), clients: clients::list(c)? })
-    })
+    snapshot(&state)
+}
+
+/// The HTTP endpoint's token and the two ways to hand it over.
+///
+/// This is the one command in Kern that returns a secret to the window, and
+/// it does so because a bearer token is no use until it is in the other
+/// program's configuration — there is nowhere else for it to go. It is made
+/// on first use, lives in the OS credential store, and never reaches SQLite,
+/// a log or a backup.
+#[tauri::command]
+pub fn mcp_http_credentials(state: State<AppState>) -> AppResult<http::HttpCredentials> {
+    state.with(|c| http::credentials(c, &state))
+}
+
+/// Issues a new token. Everything connected over HTTP has to be given it
+/// again, which is what makes this worth having.
+#[tauri::command]
+pub fn mcp_http_rotate(state: State<AppState>) -> AppResult<http::HttpCredentials> {
+    http::rotate()?;
+    state.with(|c| http::credentials(c, &state))
 }
 
 #[tauri::command]

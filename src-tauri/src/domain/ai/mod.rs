@@ -33,8 +33,17 @@ pub fn vault_service() -> String {
     }
 }
 
+/// The service the app runs with: the OS credential store, and a transport
+/// that answers `claude-cli://` by running the local command and everything
+/// else over HTTPS.
+///
+/// The tool runner is **not** built here. It reaches the user's MCP servers
+/// through the window handle, and building one in a constructor this early
+/// drags the whole windowing stack into anything that links the library -
+/// including the test harness, which has no application manifest to load it
+/// with. `mcp::outbound::attach` hands it over at startup instead.
 pub fn default_service() -> AiService {
-    AiService::new(Box::new(vault::OsKeyring::new(vault_service())), Box::new(provider::UreqTransport))
+    AiService::new(Box::new(vault::OsKeyring::new(vault_service())), Box::new(provider::CliTransport::new()))
 }
 
 async fn blocking<T: Send + 'static>(app: &AppHandle, f: impl FnOnce(&AppState) -> AppResult<T> + Send + 'static) -> AppResult<T> {
@@ -206,11 +215,13 @@ pub async fn ai_account_create(app: AppHandle, input: NewAccount) -> AppResult<A
 }
 
 /// Checks a key before it is saved. The key is used for this one call only.
+/// A provider that takes no key is tested the same way, with nothing in
+/// place of one: whether it works is whether the command runs.
 #[tauri::command]
 pub async fn ai_key_test(app: AppHandle, provider: String, api_key: String, organization_id: Option<String>, project_ref: Option<String>) -> AppResult<Validation> {
-    let p = provider::Provider::parse(&provider).ok_or_else(|| AppError::Invalid("Choose Anthropic or OpenAI.".into()))?;
+    let p = provider::Provider::parse(&provider).ok_or_else(|| AppError::Invalid("Choose a provider.".into()))?;
     let key = api_key.trim().to_string();
-    if key.is_empty() {
+    if key.is_empty() && p.needs_key() {
         return Err(AppError::Invalid("Enter an API key.".into()));
     }
     let endpoint = provider::Endpoint { base_url: None, organization_id, project_ref };
@@ -292,16 +303,20 @@ pub struct SecurityReport {
 pub async fn ai_security_check(app: AppHandle) -> AppResult<SecurityReport> {
     blocking(&app, |s| {
         let list = s.with(|c| accounts::list(c))?;
+        // Only accounts that have a key are counted: one on the local
+        // `claude` command has none to hold, and reporting it as missing
+        // would say something is wrong when nothing is.
+        let keyed: Vec<&Account> = list.iter().filter(|a| a.provider.needs_key()).collect();
         let mut missing = vec![];
-        for a in &list {
+        for a in &keyed {
             if s.ai.vault.get(&a.credential_ref())?.is_none() {
                 missing.push(a.name.clone());
             }
         }
         Ok(SecurityReport {
             store: if cfg!(windows) { "Windows Credential Manager" } else if cfg!(target_os = "macos") { "macOS Keychain" } else { "Secret Service" }.into(),
-            accounts: list.len(),
-            keys_present: list.len() - missing.len(),
+            accounts: keyed.len(),
+            keys_present: keyed.len() - missing.len(),
             missing,
         })
     })
@@ -332,6 +347,9 @@ mod tests {
     struct Mock {
         replies: Arc<Mutex<HashMap<String, VecDeque<Reply>>>>,
         seen: Arc<Mutex<Vec<String>>>,
+        /// Every request body, in order, so a tool loop can be checked for
+        /// what it actually sent back.
+        bodies: Arc<Mutex<Vec<serde_json::Value>>>,
     }
     impl Mock {
         fn on(&self, key: &str, r: Reply) {
@@ -347,6 +365,9 @@ mod tests {
                 .map(|(_, v)| v.trim_start_matches("Bearer ").to_string())
                 .unwrap_or_default();
             self.seen.lock().unwrap().push(key.clone());
+            if let Some(body) = req.body.as_deref().and_then(|b| serde_json::from_str(b).ok()) {
+                self.bodies.lock().unwrap().push(body);
+            }
             self.replies.lock().unwrap().get_mut(&key).and_then(|q| q.pop_front()).unwrap_or_else(|| Err(TransportError::NotSent("no script".into())))
         }
     }
@@ -364,6 +385,31 @@ mod tests {
             headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             body: format!(r#"{{"type":"error","error":{{"type":"{kind}","message":"x"}}}}"#),
         })
+    }
+
+    /// A tool that always works, and remembers what it was asked.
+    #[derive(Default, Clone)]
+    struct FakeTools {
+        ran: Arc<Mutex<Vec<String>>>,
+        fail: bool,
+    }
+
+    impl router::ToolRunner for FakeTools {
+        fn list(&self) -> Vec<router::ToolSpec> {
+            vec![router::ToolSpec {
+                name: "files__read".into(),
+                description: "Read a file.".into(),
+                schema: serde_json::json!({ "type": "object" }),
+            }]
+        }
+        fn call(&self, name: &str, arguments: &serde_json::Value) -> router::ToolRun {
+            self.ran.lock().unwrap().push(format!("{name}({arguments})"));
+            if self.fail {
+                router::ToolRun::failed(name, "no such file")
+            } else {
+                router::ToolRun::done(name, "the file said hello")
+            }
+        }
     }
 
     struct Setup {
@@ -411,6 +457,151 @@ mod tests {
     const K1: &str = "sk-ant-primary-0000000000000001";
     const K2: &str = "sk-ant-second-0000000000000002";
     const K3: &str = "sk-ant-third-00000000000000003";
+
+    /// An assistant reply asking for one tool to be run.
+    fn wants_tool(id: &str) -> Reply {
+        Ok(HttpResponse {
+            status: 200,
+            headers: Default::default(),
+            body: format!(
+                r#"{{"model":"claude-opus-5-5","stop_reason":"tool_use","content":[
+                     {{"type":"text","text":"Let me look."}},
+                     {{"type":"tool_use","id":"{id}","name":"files__read","input":{{"path":"a.txt"}}}}],
+                   "usage":{{"input_tokens":10,"output_tokens":5}}}}"#
+            ),
+        })
+    }
+
+    fn with_tools(s: &mut Setup, fail: bool) -> FakeTools {
+        let tools = FakeTools { ran: Default::default(), fail };
+        s.svc.attach_tools(Box::new(tools.clone()));
+        tools
+    }
+
+    fn using_tools(id: &str) -> RouteRequest {
+        RouteRequest { use_tools: Some(true), ..req(id) }
+    }
+
+    #[test]
+    fn a_tool_is_run_and_the_answer_comes_from_the_round_after() {
+        let mut s = setup("failover");
+        let tools = with_tools(&mut s, false);
+        add(&s, "Personal", K1, None);
+        s.mock.on(K1, wants_tool("tu_1"));
+        s.mock.on(K1, ok("org-a"));
+        let out = router::route(&s.db, &s.svc, &using_tools("r")).unwrap();
+        assert!(out.ok);
+        assert_eq!(out.text.as_deref(), Some("done"), "the answer is the last round's, not the first's");
+        assert_eq!(out.tool_runs.len(), 1);
+        assert_eq!((out.tool_runs[0].name.as_str(), out.tool_runs[0].ok), ("files__read", true));
+        assert_eq!(tools.ran.lock().unwrap().len(), 1);
+        assert!(tools.ran.lock().unwrap()[0].contains("a.txt"), "the model's arguments reach the tool");
+        // Two requests, both to the same account, and the second one carries
+        // the reply and the result back.
+        assert_eq!(s.mock.seen.lock().unwrap().len(), 2);
+        let bodies = s.mock.bodies.lock().unwrap();
+        assert_eq!(bodies[0]["tools"][0]["name"], "files__read");
+        let second = bodies[1]["messages"].as_array().unwrap();
+        assert_eq!(second.len(), 3);
+        assert_eq!(second[1]["content"][1]["id"], "tu_1");
+        assert_eq!(second[2]["content"][0]["content"], "the file said hello");
+        // Each round is a request of its own, so each is billed and recorded.
+        let events: i64 = s.db.with_conn(|c| Ok(c.query_row("SELECT count(*) FROM ai_usage_events", [], |r| r.get(0))?)).unwrap();
+        assert_eq!(events, 2);
+    }
+
+    #[test]
+    fn nothing_is_offered_unless_the_request_asks_for_tools() {
+        let mut s = setup("failover");
+        let tools = with_tools(&mut s, false);
+        add(&s, "Personal", K1, None);
+        s.mock.on(K1, ok("org-a"));
+        let out = router::route(&s.db, &s.svc, &req("r")).unwrap();
+        assert!(out.ok && out.tool_runs.is_empty());
+        assert!(tools.ran.lock().unwrap().is_empty());
+        assert!(s.mock.bodies.lock().unwrap()[0].get("tools").is_none(), "no tools key at all");
+    }
+
+    #[test]
+    fn a_tool_that_went_wrong_is_reported_to_the_model_rather_than_failing_the_request() {
+        let mut s = setup("failover");
+        with_tools(&mut s, true);
+        add(&s, "Personal", K1, None);
+        s.mock.on(K1, wants_tool("tu_1"));
+        s.mock.on(K1, ok("org-a"));
+        let out = router::route(&s.db, &s.svc, &using_tools("r")).unwrap();
+        assert!(out.ok, "the request still succeeds: the model is told and answers anyway");
+        assert!(!out.tool_runs[0].ok);
+        let bodies = s.mock.bodies.lock().unwrap();
+        assert_eq!(bodies[1]["messages"][2]["content"][0]["is_error"], true);
+    }
+
+    #[test]
+    fn a_model_going_round_in_circles_is_stopped() {
+        let mut s = setup("failover");
+        with_tools(&mut s, false);
+        add(&s, "Personal", K1, None);
+        s.db.with_conn(|c| crate::domain::settings::set(c, "ai.maxToolRounds", &serde_json::json!(2))).unwrap();
+        for i in 0..4 {
+            s.mock.on(K1, wants_tool(&format!("tu_{i}")));
+        }
+        let out = router::route(&s.db, &s.svc, &using_tools("r")).unwrap();
+        assert!(out.ok, "it answers with the text it had rather than erroring");
+        assert_eq!(out.tool_runs.len(), 2, "two rounds, as set");
+        assert_eq!(out.text.as_deref(), Some("Let me look."));
+        assert!(out.warnings.iter().any(|w| w.contains("2 rounds")));
+        // The attempt budget is for failures: three good requests must not
+        // trip "stopped after 3 attempts".
+        assert_eq!(s.mock.seen.lock().unwrap().len(), 3);
+        assert!(out.error.is_none());
+    }
+
+    #[test]
+    fn once_a_tool_has_run_the_request_is_not_handed_to_another_account() {
+        let mut s = setup("failover");
+        with_tools(&mut s, false);
+        add(&s, "Personal", K1, None);
+        add(&s, "Secondary", K2, None);
+        s.mock.on(K1, wants_tool("tu_1"));
+        // The round after the tool ran fails with something that would
+        // normally fail over.
+        s.mock.on(K1, err(402, "billing_error", &[]));
+        s.mock.on(K2, ok("org-b"));
+        let out = router::route(&s.db, &s.svc, &using_tools("r")).unwrap();
+        assert!(!out.ok);
+        assert!(out.switches.is_empty(), "failing over would run that tool a second time");
+        assert!(!s.mock.seen.lock().unwrap().contains(&K2.to_string()));
+        assert!(out.error.unwrap().message.contains("can't be retried automatically"));
+    }
+
+    #[test]
+    fn a_provider_that_brings_its_own_tools_is_not_given_kerns() {
+        let mut s = setup("failover");
+        with_tools(&mut s, false);
+        let cli = s
+            .db
+            .with_conn(|c| {
+                accounts::create(
+                    c,
+                    s.svc.vault.as_ref(),
+                    &NewAccount { provider: "claude-cli".into(), name: "Subscription".into(), ..Default::default() },
+                )
+            })
+            .unwrap();
+        assert!(cli.key_hint.is_none(), "there is no key to hint at");
+        assert_eq!(s.vault.len(), 0, "and nothing went into the credential store");
+        // The CLI transport isn't in play here; the mock answers whatever is
+        // sent, keyed on an empty key because there is no key header.
+        s.mock.on("", ok("none"));
+        let out = router::route(&s.db, &s.svc, &using_tools("r")).unwrap();
+        assert!(out.ok);
+        assert!(s.mock.bodies.lock().unwrap()[0].get("tools").is_none());
+        assert!(out.warnings.iter().any(|w| w.contains("runs its own tools")));
+        // A subscription has no per-token cost, so none is invented.
+        let cost: Option<f64> =
+            s.db.with_conn(|c| Ok(c.query_row("SELECT estimated_cost FROM ai_usage_events", [], |r| r.get(0))?)).unwrap();
+        assert_eq!(cost, None);
+    }
 
     #[test]
     fn fails_over_on_confirmed_quota_error() {

@@ -51,8 +51,21 @@ portable-pty = "0.9"
 toml = "0.8"
 # Model Context Protocol: AI assistants (Claude Desktop, Claude Code) connect
 # over a local pipe and create tasks, notes, boards and projects.
-rmcp = { version = "3.6", default-features = false, features = ["server", "macros", "schemars", "transport-async-rw"] }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
+rmcp = { version = "3.6", default-features = false, features = [
+    "server",
+    "macros",
+    "schemars",
+    "transport-async-rw",
+    # Phase 4: an HTTP endpoint beside the pipe, for assistants that take a URL.
+    "transport-streamable-http-server",
+    # Phase 4: Kern as a client, calling tools on the user's own MCP servers.
+    "client",
+    "transport-child-process",
+] }
+# Serves rmcp's Streamable HTTP tower service on 127.0.0.1. Nothing else in
+# Kern listens on a port, so this arrives only with that endpoint.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "sync", "time", "macros", "process"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 

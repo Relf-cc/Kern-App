@@ -116,7 +116,9 @@ src-tauri/src/
   db/                    connection setup, versioned migrations
   domain/                one module per area: pure service functions on &Connection plus
                          thin #[tauri::command] wrappers (incl. folders, storage, links,
-                         ai/{vault,provider,router,accounts}, mcp/ (the MCP server),
+                         ai/{vault,provider,router,accounts},
+                         mcp/ (the MCP server, its HTTP endpoint, and - in
+                         outbound.rs - Kern as an MCP client),
                          git, github, repos, worktrees, workflow, sessions, workspace,
                          milestones, devenv, pty, envvars, services, deps, health,
                          catchup, fileindex)
@@ -287,6 +289,32 @@ opt-in two-replica test against a running server (see KERNWEB's README).
   - **Projects assistants may see** (`mcp.allowedProjects`) is the blanket
     allowlist, on top of each client's own. While it is set, no assistant can
     create a project.
+  - **Over HTTP** (`mcp.httpEnabled`, off by default; `mcp.httpPort`) adds a
+    second way in, for assistants that take a URL rather than a command to
+    run. A port has no owner the way a pipe does — anything on this computer
+    can reach `127.0.0.1` — so that endpoint carries a bearer token kept in
+    the OS credential store, binds loopback only, validates the `Host` header
+    against the loopback names, and refuses any request carrying an `Origin`
+    at all, which is every request a browser could make. Past the token it is
+    the same server: the client is still named, still approved by name, still
+    gated by `policy.rs` and still audited. `mcp_http_credentials` returns the
+    token because it has to be pasted into the other program's configuration
+    to be any use; it is the one command in Kern that hands a secret back,
+    and it still never reaches SQLite, a log or a backup.
+- **Servers Kern can use** (`mcp.toolsEnabled`, off by default) is the other
+  direction, and the only place a model can reach outside Kern's own data.
+  Kern becomes the *client*: it starts an MCP server the user has added
+  (`domain/mcp/outbound.rs`, `mcp_servers`) and offers its tools to the model
+  during an AI request that asked for them (`useTools`). A server's command
+  runs as the user, with everything that gives it — Kern cannot make that
+  safe and the tab says so. What it does guarantee: nothing is offered while
+  either this switch or the server's own is off, a request only gets tools if
+  it asked for them, each round of tool calls is a billed request of its own
+  and is bounded by `ai.maxToolRounds`, a request stops being replayable the
+  moment a tool has run (failing over would run it twice), and every call
+  lands in `mcp_tool_calls` with how long it took and how it went. Kern
+  offers those servers no sampling, no roots and no elicitation, so a server
+  cannot ask Kern's model to do anything.
 
 - Files that commonly hold secrets (`.env`, `*.pem`, `*.key`, `id_rsa`, anything
   named `credentials` or `secret` — `folders::is_sensitive`) are never offered to
@@ -418,7 +446,31 @@ Details that aren't obvious from the code:
   extension bundle for Claude Desktop. Every write records what would undo
   it, so one tool call — twenty tasks and a project included — goes back in
   one press of **Revert**; `kern://mcp-applied` carries the batch id, which is
-  the audit row's own id, so the toast can offer it too.
+  the audit row's own id, so the toast can offer it too. `domain/mcp/http.rs`
+  serves the same handler over rmcp's Streamable HTTP service on a loopback
+  axum listener, with the token and Origin rules above; the service is built
+  per request for the client the token's caller named, so revoking an
+  assistant stops its next call rather than its next connection.
+  `domain/mcp/outbound.rs` is the opposite direction (see the privacy section
+  above): connections to the user's own servers are kept open between calls,
+  because starting one over `npx` takes seconds and a tool loop makes
+  several, and are shut down when a server is changed, disabled or removed.
+
+- **Kern's own AI on a subscription**: `Provider::ClaudeCli` runs the `claude`
+  command already installed on this computer, so an assist or catch-up run
+  goes out on the user's own Claude subscription with no API key and nothing
+  billed per token. It reaches the rest of `domain/ai/` by pretending to be
+  HTTP: `complete_request` builds the Anthropic body against a
+  `claude-cli://` URL, and `CliTransport` answers it by running the command
+  and synthesising the response Anthropic's API would have returned — so
+  routing, failover, usage, budgets and the accounts UI needed nothing new.
+  An account for it has no key, nothing in the credential store and no key
+  hint. Kern uses the command as a model and not as an agent: `--max-turns 1`,
+  in a scratch directory, so a request for a project breakdown cannot become
+  the CLI reading or writing the user's files. `KERN_CLAUDE_CLI` overrides
+  where the command is looked for, which matters because the usual installer
+  edits a shell profile a GUI app never reads. What the CLI cannot do:
+  stream, honour `max_tokens`, or be given Kern's tools (it has its own).
 
 ### Kern Lite
 

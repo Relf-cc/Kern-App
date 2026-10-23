@@ -80,6 +80,11 @@
   color: var(--danger);
 }
 
+.mcp-problem {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
 .mcp-empty-line {
   font-size: var(--fs-sm);
   margin: 8px 0 0;

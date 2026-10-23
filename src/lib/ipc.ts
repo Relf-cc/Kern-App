@@ -215,6 +215,22 @@ export const api = {
     setup: () => call<T.McpSetup>("mcp_setup_info"),
     /** Adds Kern to `claude_desktop_config.json`; returns the file it wrote. */
     setupClaudeDesktop: () => call<string>("mcp_setup_claude_desktop"),
+    /** The HTTP endpoint's token, made on first use. See McpHttpCredentials. */
+    httpCredentials: () => call<T.McpHttpCredentials>("mcp_http_credentials"),
+    /** Issues a new token; everything connected over HTTP needs it again. */
+    httpRotate: () => call<T.McpHttpCredentials>("mcp_http_rotate"),
+    /** The other direction: servers Kern's own AI features may call. */
+    servers: () => call<T.McpServer[]>("mcp_servers_list"),
+    serverCreate: (input: { name: string; command: string; args?: string[]; env?: Record<string, string>; cwd?: string | null }) =>
+      call<T.McpServer>("mcp_server_create", { input }),
+    serverUpdate: (id: string, patch: Partial<Pick<T.McpServer, "name" | "command" | "args" | "env" | "cwd" | "enabled">>) =>
+      call<T.McpServer>("mcp_server_update", { id, patch }),
+    serverRemove: (id: string) => call<void>("mcp_server_remove", { id }),
+    /** Starts it, asks what it offers and saves the answer. */
+    serverTest: (id: string) => call<T.McpServer>("mcp_server_test", { id }),
+    serverCalls: (limit?: number) => call<T.McpToolCall[]>("mcp_server_calls", { limit: limit ?? null }),
+    serversDisconnect: () => call<void>("mcp_servers_disconnect"),
+    toolCatalog: () => call<T.McpToolCatalog>("mcp_tool_catalog"),
   },
   /** Git commands act on one linked repository (see `repos`). */
   git: {

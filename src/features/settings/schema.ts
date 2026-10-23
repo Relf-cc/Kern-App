@@ -224,6 +224,8 @@ export interface Settings {
   "ai.notifySwitch": boolean;
   "ai.usageRetentionDays": number;
   "ai.modelPrices": Record<string, ModelPrice>;
+  /** How many rounds of tool calls one AI request may make. Read by the backend. */
+  "ai.maxToolRounds": number;
   // Assistants (MCP): AI clients that connect to Kern over a local pipe
   /** Off by default. Nothing listens until this is on. Read by the backend. */
   "mcp.enabled": boolean;
@@ -235,6 +237,12 @@ export interface Settings {
   "mcp.maxCallsPerMinute": number;
   /** Days of assistant activity to keep. Read by the backend. */
   "mcp.auditDays": number;
+  /** The loopback HTTP endpoint beside the pipe. Off by default. Read by the backend. */
+  "mcp.httpEnabled": boolean;
+  /** The port that endpoint listens on, on 127.0.0.1 only. Read by the backend. */
+  "mcp.httpPort": number;
+  /** Let Kern's own AI features call the MCP servers the user has added. Read by the backend. */
+  "mcp.toolsEnabled": boolean;
   // GitHub
   "github.auth": "auto" | "cli" | "token";
   "github.autoSync": boolean;
@@ -442,12 +450,16 @@ export const DEFAULTS: Settings = {
   "ai.notifySwitch": true,
   "ai.usageRetentionDays": 90,
   "ai.modelPrices": {},
+  "ai.maxToolRounds": 4,
 
   "mcp.enabled": false,
   "mcp.confirmWrites": "destructive",
   "mcp.allowedProjects": [],
   "mcp.maxCallsPerMinute": 120,
   "mcp.auditDays": 30,
+  "mcp.httpEnabled": false,
+  "mcp.httpPort": 8787,
+  "mcp.toolsEnabled": false,
 
   "github.auth": "auto",
   "github.autoSync": true,

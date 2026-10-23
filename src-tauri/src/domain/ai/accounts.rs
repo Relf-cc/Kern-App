@@ -2,8 +2,14 @@
 // @Date 2026-10-12
 
 //! AI API account profiles: non-sensitive metadata in SQLite, keys in the
-//! OS credential store (see vault.rs). "Account" here always means an API
-//! credential profile, never a subscription login.
+//! OS credential store (see vault.rs). "Account" here usually means an API
+//! credential profile.
+//!
+//! The exception is `Provider::ClaudeCli`, which is the `claude` command on
+//! this computer and is signed in as somebody already. Such an account has
+//! no key, nothing in the credential store and no key hint — it is a profile
+//! saying "use the CLI", with the same routing, budget and status machinery
+//! around it as any other.
 
 use super::provider::{ErrorCategory, Provider};
 use super::vault::{Secret, SecretStore};
@@ -188,15 +194,22 @@ fn opt(s: &Option<String>) -> Option<String> {
 }
 
 pub fn create(conn: &Connection, vault: &dyn SecretStore, input: &NewAccount) -> AppResult<Account> {
-    let provider = Provider::parse(&input.provider).ok_or_else(|| AppError::Invalid("Choose Anthropic or OpenAI.".into()))?;
+    let provider = Provider::parse(&input.provider).ok_or_else(|| AppError::Invalid("Choose a provider.".into()))?;
     let name = input.name.trim();
     if name.is_empty() {
         return invalid("Give the account a name.");
     }
-    let key = clean_key(&input.api_key)?;
     let id = new_id();
-    // Secret first: if the credential store refuses, nothing is saved.
-    vault.set(&credential_ref(&id), &key)?;
+    // A provider with no key has nothing to put in the credential store.
+    // Otherwise the secret goes in first: if the store refuses, nothing is
+    // saved, so there is never a profile without its key.
+    let key = if provider.needs_key() {
+        let key = clean_key(&input.api_key)?;
+        vault.set(&credential_ref(&id), &key)?;
+        Some(key)
+    } else {
+        None
+    };
     let now = now_ms();
     let insert = (|| -> AppResult<()> {
         let priority: f64 = conn.query_row("SELECT coalesce(max(priority), 0) + 1 FROM ai_accounts", [], |r| r.get(0))?;
@@ -210,7 +223,7 @@ pub fn create(conn: &Connection, vault: &dyn SecretStore, input: &NewAccount) ->
                 provider.as_str(),
                 name,
                 credential_ref(&id),
-                Some(key.hint()).filter(|h| !h.is_empty()),
+                key.as_ref().map(|k| k.hint()).filter(|h| !h.is_empty()),
                 priority,
                 if has_primary { "none" } else { "primary" },
                 opt(&input.preferred_model),
@@ -310,6 +323,9 @@ pub fn update(conn: &Connection, id: &str, p: &AccountPatch) -> AppResult<Accoun
 /// Replaces the stored key. Status resets: the new key is untested.
 pub fn replace_key(conn: &Connection, vault: &dyn SecretStore, id: &str, key: &str) -> AppResult<Account> {
     let a = get(conn, id)?;
+    if !a.provider.needs_key() {
+        return invalid("This account uses the claude command on this computer, which signs in by itself. There is no key to change.");
+    }
     let key = clean_key(key)?;
     vault.set(&a.credential_ref(), &key)?;
     conn.execute(

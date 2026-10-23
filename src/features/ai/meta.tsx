@@ -8,7 +8,7 @@ import { siAnthropic } from "simple-icons";
 import type { AiAccount, AiErrorCategory, AiProvider, AiStatus } from "@/lib/types";
 import { BrandIcon } from "@/components/ui/BrandIcon";
 
-export const PROVIDER_NAME: Record<AiProvider, string> = { anthropic: "Anthropic", openai: "OpenAI" };
+export const PROVIDER_NAME: Record<AiProvider, string> = { anthropic: "Anthropic", openai: "OpenAI", "claude-cli": "Claude subscription" };
 
 /**
  * Provider mark in a neutral tile. Anthropic uses its Simple Icons mark.
@@ -82,4 +82,13 @@ export const formatTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).
 export const formatUsd = (n: number) => (n < 0.01 && n > 0 ? "<$0.01" : `$${n.toFixed(2)}`);
 
 /** Suggested default models; the connection test lists what the key can actually use. */
-export const SUGGESTED_MODEL: Record<AiProvider, string | null> = { anthropic: "claude-opus-5-5", openai: null };
+export const SUGGESTED_MODEL: Record<AiProvider, string | null> = { anthropic: "claude-opus-5-5", openai: null, "claude-cli": "default" };
+
+/** Providers that need an API key. The CLI is signed in on its own. */
+export const NEEDS_KEY: Record<AiProvider, boolean> = { anthropic: true, openai: true, "claude-cli": false };
+
+export const PROVIDER_HINT: Record<AiProvider, string> = {
+  anthropic: "An API key from console.anthropic.com. Billed per token.",
+  openai: "An API key from platform.openai.com. Billed per token.",
+  "claude-cli": "The claude command already installed on this computer, on your own Claude subscription. No key, and nothing billed per token.",
+};

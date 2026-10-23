@@ -378,6 +378,9 @@ pub async fn assist_run(app: AppHandle, input: AssistInput, request_id: String) 
             project_id: built.project_id.clone(),
             replayable: Some(true),
             purpose: Some(format!("assist:{}", input.action)),
+            // The user's own MCP servers, if they have turned them on and
+            // enabled any; otherwise this asks for nothing.
+            use_tools: Some(true),
             ..Default::default()
         };
         let outcome = router::route(s, &s.ai, &req)?;
