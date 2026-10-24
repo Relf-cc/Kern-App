@@ -10,6 +10,7 @@ pub mod archive;
 pub mod assist;
 pub mod attachments;
 pub mod boards;
+pub mod bugreport;
 pub mod calendar;
 pub mod catchup;
 pub mod cloud;

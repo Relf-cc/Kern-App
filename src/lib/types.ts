@@ -697,6 +697,19 @@ export interface UpdateInfo {
   security: boolean;
 }
 
+export type BugSeverity = "low" | "medium" | "high" | "critical";
+
+/** Mirrors `bugreport::BugReport`. */
+export interface BugReportInput {
+  title: string;
+  description: string;
+  steps: string;
+  severity: BugSeverity | null;
+  email: string;
+  /** Adds the Kern version and operating system. */
+  includeSystem: boolean;
+}
+
 export interface ReleaseNotes {
   version: string;
   name: string;

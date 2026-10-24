@@ -575,6 +575,9 @@ pub fn run() {
             window::tray_refresh,
             updates::check_for_update,
             updates::release_notes,
+            // bug reports
+            bugreport::bug_report_available,
+            bugreport::bug_report_send,
         ])
         .build(context())
         .expect("error while building Kern")

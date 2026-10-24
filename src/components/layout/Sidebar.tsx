@@ -6,6 +6,7 @@
 import {
   ArrowDown,
   ArrowUp,
+  Bug,
   CalendarClock,
   ChevronDown,
   ClipboardCheck,
@@ -77,6 +78,7 @@ import { APP_NAME } from "@/app/brand";
 import { BrandMark } from "@/app/BrandMark";
 import { switchMode } from "@/app/mode";
 import { startUpdate } from "@/features/updates/store";
+import { openBugReport } from "@/features/bug-report/open";
 import { AUTO_SCROLL, DROP_ANIMATION, DragPreview, SORT_TRANSITION, SortableRow, announcements, restrictToVertical, useListSensors } from "./sortable";
 
 /**
@@ -210,6 +212,7 @@ export function Sidebar() {
         <UpdateBanner collapsed={collapsed} />
         <SessionPill collapsed={collapsed} />
         <FocusPill collapsed={collapsed} />
+        <NavButton icon={Bug} label="Report a bug" collapsed={collapsed} onClick={openBugReport} />
         <NavButton icon={Trash} label="Trash" active={route.name === "trash"} collapsed={collapsed} onClick={() => navigate({ name: "trash" })} />
         <div className="row" style={{ gap: 2 }}>
           <div className="grow">

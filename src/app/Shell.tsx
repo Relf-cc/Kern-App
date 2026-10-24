@@ -36,6 +36,7 @@ import { CloudHost } from "@/features/cloud/CloudHost";
 import { useAssist } from "@/features/assist/open";
 import { useShare } from "@/features/share/open";
 import { useTemplateDialogs } from "@/features/templates/open";
+import { useBugReport } from "@/features/bug-report/open";
 
 const TerminalPanel = lazy(() => import("@/features/terminal/TerminalPanel"));
 const CatchupHost = lazy(() => import("@/features/catchup/CatchupDialog"));
@@ -44,6 +45,7 @@ const CustomizeProjectHost = lazy(() => import("@/features/projects/CustomizePro
 const AssistHost = lazy(() => import("@/features/assist/AssistDialog"));
 const ShareHost = lazy(() => import("@/features/share/ShareDialog"));
 const TemplateHost = lazy(() => import("@/features/templates/TemplateDialogs"));
+const BugReportHost = lazy(() => import("@/features/bug-report/BugReportDialog"));
 
 /** Hosts that load their code only once they're needed. */
 function LazyHosts() {
@@ -53,11 +55,13 @@ function LazyHosts() {
   const assist = useAssist((s) => !!s.req);
   const share = useShare((s) => !!s.req);
   const template = useTemplateDialogs((s) => !!s.req);
+  const bugReport = useBugReport((s) => s.open);
   return (
     <Suspense fallback={null}>
       {assist && <AssistHost />}
       {share && <ShareHost />}
       {template && <TemplateHost />}
+      {bugReport && <BugReportHost />}
       {catchup && <CatchupHost />}
       {customize && <CustomizeProjectHost />}
       {worktree && <WorktreeDialogHost />}

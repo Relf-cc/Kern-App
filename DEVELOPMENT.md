@@ -243,6 +243,25 @@ gone.
 Tests: `cargo test cloud` (engine and client), `npx vitest run collab`, and an
 opt-in two-replica test against a running server (see KERNWEB's README).
 
+### Bug reports
+
+**Report a bug** (sidebar, above Trash) sends a report to a stream in the
+Kern workspace, where it becomes a task. Reporters need no account and join
+nothing: a stream can only add to its space. The address is `STREAM_URL` in
+`domain/bugreport.rs`; while it's empty the dialog says reports aren't set
+up. Debug builds can send to a local server's stream with
+`KERN_BUG_REPORT_URL`.
+
+The stream is made in the Kern workspace from the **Bug report** preset
+(its fields are what Kern sends; severity sets the task's priority), with
+authentication **public** and **require Origin off** — the address ships in
+every copy of Kern, so a token would be no more secret, and the request
+comes from Rust, not a browser page. The stream's rate limits and size limit
+apply as to anyone. Each report carries an `Idempotency-Key` that changes
+only when its contents do, so a retry after a timeout never files it twice.
+The version and OS are added only when the reporter leaves that box ticked,
+and nothing is sent while network access is off.
+
 ## Privacy and permissions
 
 - No network access is needed. Every network use is optional and controlled in
@@ -251,7 +270,8 @@ opt-in two-replica test against a running server (see KERNWEB's README).
     a third-party proxy), cached locally; private/local addresses are refused;
   - AI requests and connection tests, only when you make them (no polling);
   - GitHub issue sync and pull requests, only for projects you connect;
-  - Kern Cloud, only after turning on online collaboration and signing in.
+  - Kern Cloud, only after turning on online collaboration and signing in;
+  - a bug report, only when you send one (no account needed).
 - Settings → Privacy & Security also covers what Kern shows and keeps locally:
   - **Blur contents when Kern isn't focused** (`privacy.blurOnUnfocus`) sets
     `data-unfocused` on the root element from `src/app/effects.ts`; `base.css`

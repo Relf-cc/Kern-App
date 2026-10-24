@@ -693,6 +693,12 @@ export const api = {
     quit: () => call<void>("quit_app"),
     showWindow: () => call<void>("show_main_window"),
   },
+  /** Reports sent to the Kern workspace's bug report stream. */
+  bugReport: {
+    available: () => call<boolean>("bug_report_available"),
+    /** `key` stays the same for every retry of one report. */
+    send: (report: T.BugReportInput, key: string) => call<string>("bug_report_send", { report, key }),
+  },
   /** Full Kern or Kern Lite, in the same window. */
   app: {
     mode: () => call<{ mode: "kern" | "lite"; ask: boolean }>("app_mode_get"),
